@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ガンダムウォー卓</title>
+<style>
+:root{
+  --bg:#14161b; --panel:#1c1f26; --panel2:#242832; --line:#323743; --text:#e7e9ee; --sub:#9aa1b0; --accent:#e0b14a; --danger:#e0645a; --ok:#5cc58a;
+  --c-白:#e9e6dc; --c-青:#3a7be0; --c-緑:#33a85a; --c-黒:#55555f; --c-赤:#d9483d; --c-茶:#a87240; --c-紫:#8a58c4; --c-無:#9a9a9a;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font:14px/1.5 "Hiragino Sans","Noto Sans JP","Yu Gothic UI",Meiryo,sans-serif;-webkit-text-size-adjust:100%}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:5px 10px}
+button:hover{border-color:#4a5162}
+button.primary{background:var(--accent);color:#1a1a1a;border-color:var(--accent);font-weight:600}
+button.ghost{background:transparent}
+input,select,textarea{background:#11131a;border:1px solid var(--line);border-radius:6px;padding:6px 8px;min-width:0}
+input:focus,select:focus,textarea:focus{outline:2px solid #4b6fb3;outline-offset:-1px}
+header{display:flex;align-items:center;gap:12px;padding:8px 16px;border-bottom:1px solid var(--line);background:#101217;height:48px}
+header h1{font-size:16px;margin:0;letter-spacing:.05em}
+header h1 span{color:var(--accent)}
+nav.tabs{display:flex;gap:4px;margin-left:auto}
+nav.tabs button{background:transparent;border-color:transparent}
+nav.tabs button.on{border-color:var(--line);background:var(--panel2)}
+main{height:calc(100% - 48px)}
+.view{display:none;height:100%}
+.view.on{display:flex}
+
+/* ===== デッキ構築 ===== */
+#builder{gap:0}
+.pane{display:flex;flex-direction:column;min-width:0;min-height:0}
+#searchPane{flex:1 1 60%;border-right:1px solid var(--line)}
+#deckPane{flex:1 1 40%;max-width:520px}
+.filters{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:8px;background:var(--panel)}
+.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.row input[type=search]{flex:1 1 200px}
+.chip{border-radius:999px;padding:2px 10px;font-size:13px;background:transparent;opacity:.55}
+.chip.on{opacity:1;background:var(--panel2);border-color:#5a6275}
+.chip .dot,.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px;border:1px solid #0006}
+.cost-in{width:52px}
+.count{color:var(--sub);font-size:12px;text-align:right;margin-top:-4px}
+.list{flex:1;overflow:auto;padding:4px 0}
+.crow{display:grid;grid-template-columns:6px 1fr auto;gap:0 10px;padding:6px 12px 6px 0;border-bottom:1px solid #262a33;cursor:pointer}
+.crow:hover{background:#1f232b}
+.crow .bar{grid-row:1/3;border-radius:0 3px 3px 0}
+.crow .bar{grid-column:1}
+.crow .nm{grid-column:2;grid-row:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crow .meta{grid-column:2;grid-row:2;min-width:0;color:var(--sub);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.crow .act{grid-column:3;grid-row:1/3;display:flex;align-items:center;gap:4px}
+.crow .act button{width:30px;height:30px;padding:0;font-size:16px;line-height:1}
+.crow .have{min-width:18px;text-align:center;color:var(--accent);font-weight:700}
+.more{display:block;margin:10px auto}
+.tbadge{display:inline-block;font-size:11px;padding:0 5px;border-radius:3px;background:#2d3240;color:#c9cfdb;margin-right:6px;vertical-align:1px}
+
+.deckhead{padding:10px 12px;border-bottom:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;gap:8px}
+.deckhead .row select{flex:1}
+#deckName{flex:1}
+.stats{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--sub)}
+.stats b{color:var(--text);font-size:15px}
+.stats .bad{color:var(--danger)}
+.colorbar{display:flex;height:6px;border-radius:3px;overflow:hidden;background:#2a2e38}
+.dsec{padding:6px 12px 2px;font-size:12px;color:var(--sub);border-bottom:1px solid #262a33;background:#191c22;position:sticky;top:0}
+.empty{padding:30px 16px;color:var(--sub);text-align:center}
+
+/* ===== カード表示（画像がない時のカード風の枠） ===== */
+.card{width:250px;aspect-ratio:63/88;border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:6px;background:linear-gradient(160deg,var(--cc) 0%,#15171c 85%);border:2px solid #0008;box-shadow:0 4px 16px #0007;color:#f3f3f3;font-size:11.5px;position:relative;overflow:hidden;flex:none}
+.card.img{padding:0;background:#000}
+.card.img img{width:100%;height:100%;object-fit:cover;display:block}
+.card .top{display:flex;align-items:center;gap:6px}
+.card .cost{background:#000a;border-radius:4px;padding:1px 5px;font-weight:700;font-size:12px;white-space:nowrap}
+.card .name{font-weight:700;font-size:13px;line-height:1.25;text-shadow:0 1px 2px #000}
+.card .model{font-size:10px;opacity:.85}
+.card .art{flex:0 0 28%;border-radius:6px;background:repeating-linear-gradient(45deg,#0003 0 6px,#0001 6px 12px);display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:800;opacity:.75;letter-spacing:.05em}
+.card .traits{font-size:10.5px;background:#0006;border-radius:4px;padding:1px 5px}
+.card .text{flex:1;overflow:auto;background:#0008;border-radius:6px;padding:5px 6px;line-height:1.45}
+.card .text p{margin:0 0 3px}
+.card .foot{display:flex;justify-content:space-between;align-items:center;font-size:11px}
+.card .st{font-weight:800;font-size:14px;background:#000a;border-radius:4px;padding:0 6px;letter-spacing:.05em}
+.card[data-c="白"] .name,.card[data-c="白"] .model{color:#1b1b1f;text-shadow:none}
+.card[data-c="白"] .art{color:#333}
+.card.sm{width:120px;font-size:8px;padding:5px;gap:3px;border-radius:7px}
+.card.sm .name{font-size:10px}.card.sm .cost{font-size:9px}.card.sm .st{font-size:11px}.card.sm .text{display:none}.card.sm .model,.card.sm .traits{display:none}.card.sm .art{flex:1;font-size:20px}
+.kw{color:#ffd77a}
+
+/* ===== 詳細シート ===== */
+#sheet{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
+#sheet.on{display:flex}
+.sheet-in{background:var(--panel);border:1px solid var(--line);border-radius:12px;max-width:720px;width:100%;max-height:100%;overflow:auto;padding:16px;display:flex;gap:16px}
+.sheet-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.sheet-info h2{margin:0;font-size:18px}
+.sheet-info .sub{color:var(--sub);font-size:12px}
+.sheet-info .txt{background:#11131a;border-radius:8px;padding:8px 10px;line-height:1.6}
+.sheet-info .txt p{margin:0 0 4px}
+.qty{display:flex;align-items:center;gap:8px}
+.qty button{width:40px;height:40px;font-size:20px;padding:0}
+.qty b{font-size:20px;min-width:24px;text-align:center}
+
+/* ===== モーダル共通 ===== */
+dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;max-width:560px;width:calc(100% - 32px);padding:16px}
+dialog::backdrop{background:#000a}
+dialog h3{margin:0 0 8px}
+dialog textarea{width:100%;height:220px;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+dialog .row{justify-content:flex-end;margin-top:10px}
+.note{color:var(--sub);font-size:12px}
+
+#toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#000d;border:1px solid var(--line);padding:8px 16px;border-radius:999px;opacity:0;transition:.2s;pointer-events:none;z-index:99}
+#toast.on{opacity:1}
+
+#battle{align-items:center;justify-content:center;color:var(--sub);flex-direction:column;gap:8px}
+
+/* ===== スマホ ===== */
+.mobbar,.mobonly{display:none}
+.fmore{display:flex;flex-direction:column;gap:8px}
+@media (max-width:820px){
+  header{padding:8px 12px}
+  #builder{flex-direction:column}
+  #searchPane,#deckPane{flex:1;max-width:none;border:0}
+  #builder:not(.showdeck) #deckPane{display:none}
+  #builder.showdeck #searchPane{display:none}
+  .mobonly{display:inline-block}
+  .row input[type=search]{flex:1 1 100px}
+  #sort{width:96px}
+  .fmore{display:none}
+  .filters.open .fmore{display:flex}
+  .filters{padding:8px 12px}
+  .mobbar{display:flex;gap:8px;padding:8px 12px calc(8px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:#101217}
+  .mobbar button{flex:1;padding:10px}
+  .mobbar button.on{border-color:var(--accent);color:var(--accent)}
+  .crow .act .pc{display:none}
+  .sheet-in{flex-direction:column;align-items:center;padding:12px}
+  #sheet{align-items:flex-end;padding:0}
+  .sheet-in{border-radius:12px 12px 0 0;max-height:92%}
+  .sheet-in .card{width:170px}
+  nav.tabs button{padding:5px 8px}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>GUNDAM WAR <span>卓</span></h1>
+  <nav class="tabs">
+    <button data-view="builder" class="on">デッキ構築</button>
+    <button data-view="battle">対戦</button>
+  </nav>
+</header>
+<main>
+  <!-- ===== デッキ構築 ===== -->
+  <section id="builder" class="view on">
+    <div class="pane" id="searchPane">
+      <div class="filters">
+        <div class="row">
+          <input type="search" id="q" placeholder="カード名・テキスト・特徴で検索（スペースで絞り込み）">
+          <select id="sort">
+            <option value="no">番号順</option>
+            <option value="name">名前順</option>
+            <option value="cost">合計国力順</option>
+          </select>
+          <button id="fToggle" class="mobonly">絞り込み</button>
+        </div>
+        <div class="fmore">
+        <div class="row" id="colorChips"></div>
+        <div class="row" id="typeChips"></div>
+        <div class="row">
+          <span class="note">合計国力</span>
+          <input type="number" id="costMin" class="cost-in" min="0" placeholder="下限">
+          <span class="note">〜</span>
+          <input type="number" id="costMax" class="cost-in" min="0" placeholder="上限">
+          <select id="setSel" style="flex:1 1 160px"><option value="">全セット</option></select>
+        </div>
+        </div>
+        <span class="count" id="hitCount"></span>
+      </div>
+      <div class="list" id="results"></div>
+    </div>
+
+    <div class="pane" id="deckPane">
+      <div class="deckhead">
+        <div class="row">
+          <select id="deckSel"></select>
+          <button id="newDeck" title="新しいデッキ">＋新規</button>
+        </div>
+        <div class="row">
+          <input id="deckName" placeholder="デッキ名">
+          <button id="dupDeck">複製</button>
+          <button id="delDeck" class="ghost" style="color:var(--danger)">削除</button>
+        </div>
+        <div class="stats" id="deckStats"></div>
+        <div class="colorbar" id="colorBar"></div>
+        <div class="row">
+          <button id="exportBtn">デッキコードを出す</button>
+          <button id="importBtn">読み込む</button>
+          <button id="ruleBtn" class="ghost" style="margin-left:auto">ルール設定</button>
+        </div>
+      </div>
+      <div class="list" id="deckList"></div>
+    </div>
+    <div class="mobbar">
+      <button id="mSearch" class="on">カード検索</button>
+      <button id="mDeck">デッキ <span id="mCount">0</span>枚</button>
+    </div>
+  </section>
+
+  <!-- ===== 対戦（次の段階で作る） ===== -->
+  <section id="battle" class="view">
+    <div style="font-size:18px">対戦卓は準備中です</div>
+    <div class="note">次の段階で、部屋コードで繋がる対戦・観戦をここに作ります</div>
+  </section>
+</main>
+
+<div id="sheet"><div class="sheet-in" id="sheetIn"></div></div>
+
+<dialog id="codeDlg">
+  <h3 id="codeTitle"></h3>
+  <p class="note" id="codeNote"></p>
+  <textarea id="codeText" spellcheck="false"></textarea>
+  <div class="row">
+    <button id="codeCopy">コピー</button>
+    <button id="codeOk" class="primary">閉じる</button>
+  </div>
+</dialog>
+
+<dialog id="ruleDlg">
+  <h3>ルール設定</h3>
+  <p class="note">デッキの枚数チェックに使います。身内ルールに合わせて変えてください。</p>
+  <div class="row" style="justify-content:flex-start">デッキ最低枚数 <input type="number" id="ruleMin" style="width:80px"></div>
+  <div class="row" style="justify-content:flex-start">デッキ最大枚数（0で無制限） <input type="number" id="ruleMax" style="width:80px"></div>
+  <div class="row" style="justify-content:flex-start">同名カードの上限 <input type="number" id="ruleCopies" style="width:80px"></div>
+  <div class="row"><button id="ruleOk" class="primary">保存</button></div>
+</dialog>
+
+<div id="toast"></div>
+<input type="file" id="imgFile" accept="image/*" hidden>
+
+<script src="cards.js"></script>
+<script>
+'use strict';
+// =====================================================================
+//  データ
+// =====================================================================
+const CARDS = window.GW_CARDS || [];
+const BY_ID = new Map(CARDS.map(c => [c.id, c]));
+const COLORS = ['白','青','緑','黒','赤','茶','紫','無'];
+const TYPES = [['U','ユニット'],['CH','キャラクター'],['C','コマンド'],['O','オペレーション'],['G','G'],['A','ACE']];
+const TYPE_NAME = Object.fromEntries(TYPES);
+const TYPE_ORDER = Object.fromEntries(TYPES.map((t,i)=>[t[0],i]));
+
+const kata = s => s.replace(/[ぁ-ゖ]/g, ch => String.fromCharCode(ch.charCodeAt(0) + 0x60));
+const norm = s => kata((s||'').normalize('NFKC').toLowerCase());
+const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const total = c => c.k && c.k[1] != null ? +c.k[1] : -1;
+const costStr = c => c.k && c.k[0] != null ? c.k.join('-') : '';
+const numKey = no => { const m = /^([A-Z]+)-([A-Z]?)(\d+)/.exec(no || ''); return m ? [m[1], m[2], +m[3]] : [no, '', 0]; };
+CARDS.forEach(c => {
+  c._q = norm([c.n, c.m, (c.x||[]).join(' '), (c.tr||[]).join(' '), (c.tg||[]).join(' '), (c.no||[]).join(' '), c.alt ? c.alt.name : ''].join(' '));
+  c._nk = numKey(c.no[0]);
+});
+
+// =====================================================================
+//  保存まわり（ブラウザ内）
+// =====================================================================
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('gw.' + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('gw.' + k, JSON.stringify(v)); } catch (e) { toast('保存できませんでした（ブラウザの設定を確認）'); } }
+};
+let rules = Object.assign({ min: 60, max: 0, copies: 3 }, store.get('rules', {}));
+let decks = store.get('decks', []);
+let curId = store.get('cur', null);
+if (!decks.length) decks = [newDeckObj('新しいデッキ')];
+if (!decks.find(d => d.id === curId)) curId = decks[0].id;
+function newDeckObj(name) { return { id: 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, cards: {}, updated: Date.now() }; }
+const cur = () => decks.find(d => d.id === curId);
+function saveDecks() { cur().updated = Date.now(); store.set('decks', decks); store.set('cur', curId); }
+
+// =====================================================================
+//  画像（将来用の受け口）
+//  優先順位：① このブラウザで設定した画像（IndexedDB）
+//            ② サイトの images/ フォルダ（images/index.json に載っているもの）
+//            ③ なければカード風の枠
+// =====================================================================
+const Images = (() => {
+  let db = null, local = new Map(), site = new Map();
+  const open = () => new Promise(res => {
+    try {
+      const r = indexedDB.open('gw-images', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('img');
+      r.onsuccess = () => { db = r.result; res(); };
+      r.onerror = () => res();
+    } catch (e) { res(); }
+  });
+  async function init() {
+    await open();
+    if (db) await new Promise(res => {
+      const tx = db.transaction('img'), st = tx.objectStore('img');
+      const req = st.openCursor();
+      req.onsuccess = () => { const c = req.result; if (c) { local.set(c.key, URL.createObjectURL(c.value)); c.continue(); } else res(); };
+      req.onerror = () => res();
+    });
+    if (location.protocol !== 'file:') try {   // images/index.json の形式：{"U-159": "U-159.jpg", "ザクII(スレンダー機)": "zaku_slender.jpg", ...}
+      const r = await fetch('images/index.json', { cache: 'no-cache' });
+      if (r.ok) Object.entries(await r.json()).forEach(([k, f]) => site.set(k, 'images/' + f));
+    } catch (e) {}
+  }
+  // 収録番号ごと → カード名 の順に探す（同名で絵が同じなら名前で1枚登録すれば済む）
+  function url(c) {
+    for (const k of [c.id, ...c.no, c.n]) { if (local.has(k)) return local.get(k); if (site.has(k)) return site.get(k); }
+    return null;
+  }
+  async function put(key, blob) {
+    if (!db) throw new Error('この環境では画像を保存できません');
+    await new Promise((res, rej) => { const tx = db.transaction('img', 'readwrite'); tx.objectStore('img').put(blob, key); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+    if (local.has(key)) URL.revokeObjectURL(local.get(key));
+    local.set(key, URL.createObjectURL(blob));
+  }
+  async function del(key) {
+    if (!db) return;
+    await new Promise(res => { const tx = db.transaction('img', 'readwrite'); tx.objectStore('img').delete(key); tx.oncomplete = res; tx.onerror = res; });
+    local.delete(key);
+  }
+  const hasLocal = c => local.has(c.n);
+  return { init, url, put, del, hasLocal };
+})();
+
+// 長辺800pxに縮めてから保存（容量節約）
+async function shrink(file) {
+  const img = await createImageBitmap(file);
+  const s = Math.min(1, 800 / Math.max(img.width, img.height));
+  const cv = document.createElement('canvas');
+  cv.width = Math.round(img.width * s); cv.height = Math.round(img.height * s);
+  cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+  return await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.85));
+}
+
+// =====================================================================
+//  カードの見た目（対戦卓でも同じ関数を使う）
+// =====================================================================
+function fmtText(t) {
+  return esc(t)
+    .replace(/(《[^》]*》)/g, '<span class="kw">$1</span>')
+    .replace(/^(\([^)]*\)|【[^】]*】)/, '<span class="kw">$1</span>');
+}
+function cardFace(c, opt = {}) {
+  const u = Images.url(c);
+  const cls = 'card' + (opt.small ? ' sm' : '');
+  if (u) return `<div class="${cls} img" data-c="${c.c}"><img src="${esc(u)}" alt="${esc(c.n)}" loading="lazy"></div>`;
+  const st = c.st ? `[${c.st.join('][')}]` : '';
+  return `<div class="${cls}" data-c="${c.c}" style="--cc:var(--c-${c.c})">
+    <div class="top">${c.k && c.k[0] != null ? `<span class="cost">${esc(costStr(c))}</span>` : ''}<span class="tbadge">${esc(TYPE_NAME[c.t] || c.t)}</span></div>
+    <div><div class="model">${esc(c.m || '')}</div><div class="name">${esc(c.n)}</div></div>
+    <div class="art">${esc(c.c)}</div>
+    ${c.tr ? `<div class="traits">${esc(c.tr.join(' '))}</div>` : ''}
+    <div class="text">${(c.x || []).map(t => `<p>${fmtText(t)}</p>`).join('') || '<p style="opacity:.6">（テキストなし）</p>'}</div>
+    <div class="foot"><span>${esc((c.tg || []).join(' '))}</span>${st ? `<span class="st">${esc(st)}</span>` : ''}</div>
+  </div>`;
+}
+
+// =====================================================================
+//  検索
+// =====================================================================
+const F = { q: '', colors: new Set(), types: new Set(), cmin: null, cmax: null, set: '', sort: 'no' };
+let shown = 150;
+const $ = id => document.getElementById(id);
+
+function chips(el, items, set, render) {
+  el.innerHTML = items.map(([v, label]) => `<button class="chip" data-v="${esc(v)}">${label}</button>`).join('');
+  el.onclick = e => {
+    const b = e.target.closest('.chip'); if (!b) return;
+    const v = b.dataset.v;
+    set.has(v) ? set.delete(v) : set.add(v);
+    b.classList.toggle('on', set.has(v));
+    shown = 150; render();
+  };
+}
+chips($('colorChips'), COLORS.map(c => [c, `<span class="dot" style="background:var(--c-${c})"></span>${c}`]), F.colors, renderResults);
+chips($('typeChips'), TYPES.map(([v, l]) => [v, l]), F.types, renderResults);
+
+const allSets = [...new Set(CARDS.flatMap(c => c.s))];
+$('setSel').innerHTML += allSets.map(s => `<option>${esc(s)}</option>`).join('');
+
+function filtered() {
+  const words = norm(F.q).split(/\s+/).filter(Boolean);
+  let r = CARDS.filter(c =>
+    (!F.colors.size || F.colors.has(c.c)) &&
+    (!F.types.size || F.types.has(c.t)) &&
+    (F.cmin == null || total(c) >= F.cmin) &&
+    (F.cmax == null || (total(c) >= 0 && total(c) <= F.cmax)) &&
+    (!F.set || c.s.includes(F.set)) &&
+    words.every(w => c._q.includes(w)));
+  const byNo = (a, b) => a._nk[0] < b._nk[0] ? -1 : a._nk[0] > b._nk[0] ? 1 : a._nk[1] < b._nk[1] ? -1 : a._nk[1] > b._nk[1] ? 1 : a._nk[2] - b._nk[2];
+  const nameHit = c => words.length && words.every(w => norm(c.n).includes(w)) ? 0 : 1;
+  if (F.sort === 'name') r.sort((a, b) => nameHit(a) - nameHit(b) || a.n.localeCompare(b.n, 'ja') || byNo(a, b));
+  else if (F.sort === 'cost') r.sort((a, b) => nameHit(a) - nameHit(b) || total(a) - total(b) || byNo(a, b));
+  else r.sort((a, b) => nameHit(a) - nameHit(b) || byNo(a, b));
+  return r;
+}
+function rowHtml(c, n, deckMode) {
+  const meta = [c.no.join('/'), costStr(c), c.st ? `[${c.st.join('][')}]` : '', (c.x || [])[0] || ''].filter(Boolean).join('　');
+  return `<div class="crow" data-id="${esc(c.id)}">
+    <div class="bar" style="background:var(--c-${c.c})"></div>
+    <div class="nm"><span class="tbadge">${esc(TYPE_NAME[c.t] || c.t)}</span>${esc(c.n)}</div>
+    <div class="act">${n || deckMode ? `<button class="pc" data-d="-1">−</button><span class="have">${n || ''}</span>` : ''}<button data-d="1" ${deckMode ? 'class="pc"' : ''}>＋</button></div>
+    <div class="meta">${esc(meta)}</div>
+  </div>`;
+}
+function renderResults() {
+  const r = filtered();
+  $('hitCount').textContent = `${r.length}件`;
+  const d = cur().cards;
+  $('results').innerHTML = r.slice(0, shown).map(c => rowHtml(c, d[c.id] || 0)).join('') +
+    (r.length > shown ? `<button class="more" id="moreBtn">さらに表示（残り${r.length - shown}件）</button>` : '') +
+    (r.length ? '' : '<div class="empty">該当するカードがありません</div>');
+}
+let qTimer;
+$('q').oninput = e => { clearTimeout(qTimer); qTimer = setTimeout(() => { F.q = e.target.value; shown = 150; renderResults(); }, 150); };
+$('fToggle').onclick = () => $('fToggle').parentElement.parentElement.classList.toggle('open');
+$('sort').onchange = e => { F.sort = e.target.value; renderResults(); };
+$('costMin').oninput = e => { F.cmin = e.target.value === '' ? null : +e.target.value; renderResults(); };
+$('costMax').oninput = e => { F.cmax = e.target.value === '' ? null : +e.target.value; renderResults(); };
+$('setSel').onchange = e => { F.set = e.target.value; renderResults(); };
+$('results').onclick = e => {
+  if (e.target.id === 'moreBtn') { shown += 150; renderResults(); return; }
+  listClick(e);
+};
+
+// =====================================================================
+//  デッキ
+// =====================================================================
+const countByName = (deck, name) => Object.entries(deck.cards).reduce((s, [id, n]) => s + (BY_ID.get(id)?.n === name ? n : 0), 0);
+function addCard(id, delta) {
+  const d = cur(), c = BY_ID.get(id); if (!c) return;
+  const now = d.cards[id] || 0;
+  if (delta > 0 && rules.copies > 0 && countByName(d, c.n) >= rules.copies) { toast(`同名カードは${rules.copies}枚までです`); return; }
+  const n = Math.max(0, now + delta);
+  if (n) d.cards[id] = n; else delete d.cards[id];
+  saveDecks(); renderAll(true);
+}
+function listClick(e) {
+  const row = e.target.closest('.crow'); if (!row) return;
+  const b = e.target.closest('button[data-d]');
+  if (b) { addCard(row.dataset.id, +b.dataset.d); return; }
+  openSheet(row.dataset.id);
+}
+$('deckList').onclick = listClick;
+
+function deckEntries(d) {
+  return Object.entries(d.cards).map(([id, n]) => [BY_ID.get(id), n, id]).filter(e => e[0]);
+}
+function renderDeck() {
+  const d = cur();
+  $('deckSel').innerHTML = decks.slice().sort((a, b) => b.updated - a.updated)
+    .map(x => `<option value="${x.id}" ${x.id === curId ? 'selected' : ''}>${esc(x.name)}（${Object.values(x.cards).reduce((a, b) => a + b, 0)}）</option>`).join('');
+  if (document.activeElement !== $('deckName')) $('deckName').value = d.name;
+  const ents = deckEntries(d);
+  const missing = Object.keys(d.cards).filter(id => !BY_ID.has(id)).length;
+  const n = ents.reduce((s, e) => s + e[1], 0);
+  $('mCount').textContent = n;
+
+  // 集計
+  const byType = {}, byColor = {};
+  ents.forEach(([c, k]) => { byType[c.t] = (byType[c.t] || 0) + k; byColor[c.c] = (byColor[c.c] || 0) + k; });
+  const bad = n < rules.min || (rules.max && n > rules.max);
+  $('deckStats').innerHTML =
+    `<span>合計 <b class="${bad ? 'bad' : ''}">${n}</b> / ${rules.min}${rules.max ? '〜' + rules.max : '以上'}</span>` +
+    TYPES.filter(([t]) => byType[t]).map(([t, l]) => `<span>${l} <b>${byType[t]}</b></span>`).join('') +
+    (missing ? `<span class="bad">不明カード${missing}種</span>` : '');
+  $('colorBar').innerHTML = COLORS.filter(c => byColor[c]).map(c => `<div title="${c} ${byColor[c]}" style="flex:${byColor[c]};background:var(--c-${c})"></div>`).join('');
+
+  if (!ents.length) { $('deckList').innerHTML = '<div class="empty">カードを検索して「＋」で追加してください</div>'; return; }
+  ents.sort((a, b) => TYPE_ORDER[a[0].t] - TYPE_ORDER[b[0].t] || total(a[0]) - total(b[0]) || a[0].n.localeCompare(b[0].n, 'ja'));
+  let html = '', lastT = null;
+  for (const [c, k] of ents) {
+    if (c.t !== lastT) { lastT = c.t; html += `<div class="dsec">${TYPE_NAME[c.t] || c.t}（${byType[c.t]}）</div>`; }
+    html += rowHtml(c, k, true);
+  }
+  $('deckList').innerHTML = html;
+}
+function renderAll(keepScroll) {
+  const st = $('results').scrollTop;
+  renderResults(); renderDeck();
+  if (keepScroll) $('results').scrollTop = st;
+  if ($('sheet').classList.contains('on') && sheetId) openSheet(sheetId);
+}
+
+$('deckSel').onchange = e => { curId = e.target.value; saveDecks(); renderAll(); };
+$('deckName').oninput = e => { cur().name = e.target.value || '無題'; saveDecks(); };
+$('deckName').onchange = () => renderDeck();
+$('newDeck').onclick = () => { const d = newDeckObj('新しいデッキ'); decks.push(d); curId = d.id; saveDecks(); renderAll(); $('deckName').focus(); $('deckName').select(); };
+$('dupDeck').onclick = () => { const d = newDeckObj(cur().name + 'のコピー'); d.cards = { ...cur().cards }; decks.push(d); curId = d.id; saveDecks(); renderAll(); toast('複製しました'); };
+$('delDeck').onclick = () => {
+  const b = $('delDeck');
+  if (!b.dataset.arm) { b.dataset.arm = 1; b.textContent = 'もう一度で削除'; setTimeout(() => { delete b.dataset.arm; b.textContent = '削除'; }, 3000); return; }
+  delete b.dataset.arm; b.textContent = '削除';
+  decks = decks.filter(d => d.id !== curId);
+  if (!decks.length) decks.push(newDeckObj('新しいデッキ'));
+  curId = decks[0].id; saveDecks(); renderAll(); toast('削除しました');
+};
+
+// =====================================================================
+//  デッキコード（人が読めるテキスト。LINEで送ってもOK）
+//  形式：「3 ザクII(スレンダー機) [U-159]」を1行ずつ
+// =====================================================================
+function deckToText(d) {
+  const ents = deckEntries(d).sort((a, b) => TYPE_ORDER[a[0].t] - TYPE_ORDER[b[0].t] || total(a[0]) - total(b[0]));
+  return `# ${d.name}\n` + ents.map(([c, k]) => `${k} ${c.n} [${c.no[0]}]`).join('\n');
+}
+function textToDeck(text) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  let name = '読み込んだデッキ'; const cards = {}, ng = [];
+  for (const l of lines) {
+    if (l.startsWith('#')) { name = l.replace(/^#+\s*/, '') || name; continue; }
+    const m = /^(\d+)\s*[x×枚]?\s*(.+?)\s*(?:\[([^\]]+)\])?$/.exec(l.normalize('NFKC'));
+    if (!m) { ng.push(l); continue; }
+    const [, k, nm, no] = m;
+    const nn = norm(nm);
+    let c = no && CARDS.find(c => c.no.includes(no) && norm(c.n) === nn);
+    if (!c && no) c = CARDS.find(c => c.no.includes(no));
+    if (!c) c = CARDS.find(c => norm(c.n) === nn);
+    if (!c) { ng.push(l); continue; }
+    cards[c.id] = (cards[c.id] || 0) + +k;
+  }
+  return { name, cards, ng };
+}
+let codeMode = 'export';
+$('exportBtn').onclick = () => {
+  codeMode = 'export';
+  $('codeTitle').textContent = 'デッキコード';
+  $('codeNote').textContent = 'コピーしてLINEなどで送れます。別の端末では「読み込む」に貼り付けてください。';
+  $('codeText').value = deckToText(cur()); $('codeText').readOnly = true;
+  $('codeCopy').style.display = ''; $('codeOk').textContent = '閉じる';
+  $('codeDlg').showModal();
+};
+$('importBtn').onclick = () => {
+  codeMode = 'import';
+  $('codeTitle').textContent = 'デッキを読み込む';
+  $('codeNote').textContent = 'デッキコードを貼り付けてください。「3 ザクII」のように枚数と名前だけの行でも読めます。新しいデッキとして追加されます。';
+  $('codeText').value = ''; $('codeText').readOnly = false;
+  $('codeCopy').style.display = 'none'; $('codeOk').textContent = '読み込む';
+  $('codeDlg').showModal(); $('codeText').focus();
+};
+$('codeCopy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('codeText').value); toast('コピーしました'); }
+  catch (e) { $('codeText').select(); toast('選択したのでコピーしてください'); }
+};
+$('codeOk').onclick = () => {
+  if (codeMode === 'import') {
+    const r = textToDeck($('codeText').value);
+    if (!Object.keys(r.cards).length) { toast('カードが見つかりませんでした'); return; }
+    const d = newDeckObj(r.name); d.cards = r.cards; decks.push(d); curId = d.id; saveDecks(); renderAll();
+    toast(r.ng.length ? `読み込みました（読めない行${r.ng.length}行：${r.ng.slice(0, 2).join('、')}…）` : '読み込みました');
+  }
+  $('codeDlg').close();
+};
+
+// ルール設定
+$('ruleBtn').onclick = () => { $('ruleMin').value = rules.min; $('ruleMax').value = rules.max; $('ruleCopies').value = rules.copies; $('ruleDlg').showModal(); };
+$('ruleOk').onclick = () => { rules = { min: +$('ruleMin').value || 0, max: +$('ruleMax').value || 0, copies: +$('ruleCopies').value || 0 }; store.set('rules', rules); $('ruleDlg').close(); renderDeck(); };
+
+// =====================================================================
+//  カード詳細シート
+// =====================================================================
+let sheetId = null;
+function openSheet(id) {
+  const c = BY_ID.get(id); if (!c) return;
+  sheetId = id;
+  const n = cur().cards[id] || 0;
+  const alt = c.alt ? `<div class="sub">${esc(c.alt.name || '別形態')}　${esc((c.alt.tags || []).join(' '))} [${esc((c.alt.stats || []).join(']['))}]</div>${(c.alt.text || []).map(t => `<p>${fmtText(t)}</p>`).join('')}` : '';
+  $('sheetIn').innerHTML = `
+    ${cardFace(c)}
+    <div class="sheet-info">
+      <div class="sub">${esc(c.m || '')}</div>
+      <h2>${esc(c.n)}</h2>
+      <div class="sub">${esc(TYPE_NAME[c.t] || c.t)}　<span class="dot" style="background:var(--c-${c.c})"></span>${esc(c.c)}　${c.k && c.k[0] != null ? '指定' + c.k[0] + '・合計' + c.k[1] + '・コスト' + c.k[2] : ''}　${esc(c.r)}</div>
+      ${c.tr ? `<div class="sub">特徴：${esc(c.tr.join(' '))}</div>` : ''}
+      <div class="txt">${(c.x || []).map(t => `<p>${fmtText(t)}</p>`).join('') || '<p class="note">（テキストなし）</p>'}${alt}</div>
+      ${c.st ? `<div>${esc((c.tg || []).join(' '))}　<b>[${esc(c.st.join(']['))}]</b></div>` : ''}
+      <div class="sub">収録：${esc(c.s.join(' / '))}（${esc(c.no.join(', '))}）</div>
+      <div class="qty"><button data-q="-1">−</button><b>${n}</b><button data-q="1">＋</button><span class="note">枚</span></div>
+      <div class="row">
+        <button id="imgSet">画像を設定</button>
+        ${Images.hasLocal(c) ? '<button id="imgDel" class="ghost">画像を外す</button>' : ''}
+        <button id="sheetClose" class="primary" style="margin-left:auto">閉じる</button>
+      </div>
+      <div class="note">画像はこのブラウザにだけ保存され、同じ名前のカードに共通で使われます。</div>
+    </div>`;
+  $('sheet').classList.add('on');
+}
+function closeSheet() { $('sheet').classList.remove('on'); sheetId = null; }
+$('sheet').onclick = async e => {
+  if (e.target.id === 'sheet' || e.target.id === 'sheetClose') { closeSheet(); return; }
+  const q = e.target.closest('[data-q]'); if (q) { addCard(sheetId, +q.dataset.q); return; }
+  if (e.target.id === 'imgSet') $('imgFile').click();
+  if (e.target.id === 'imgDel') { await Images.del(BY_ID.get(sheetId).n); renderAll(true); toast('画像を外しました'); }
+};
+$('imgFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f || !sheetId) return;
+  try { await Images.put(BY_ID.get(sheetId).n, await shrink(f)); renderAll(true); toast('画像を設定しました'); }
+  catch (err) { toast('画像を保存できませんでした'); }
+};
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+
+// =====================================================================
+//  画面切り替え
+// =====================================================================
+document.querySelectorAll('nav.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === b.dataset.view));
+});
+$('mSearch').onclick = () => { $('builder').classList.remove('showdeck'); $('mSearch').classList.add('on'); $('mDeck').classList.remove('on'); };
+$('mDeck').onclick = () => { $('builder').classList.add('showdeck'); $('mDeck').classList.add('on'); $('mSearch').classList.remove('on'); };
+
+let toastT;
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2200); }
+
+// 起動
+if (!CARDS.length) document.body.innerHTML = '<p style="padding:20px">cards.js が読み込めませんでした。index.html と同じフォルダに置いてください。</p>';
+else { renderAll(); Images.init().then(() => renderAll()); }
+</script>
+</body>
+</html>
