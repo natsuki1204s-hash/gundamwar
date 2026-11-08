@@ -225,10 +225,11 @@ dialog .row{justify-content:flex-end;margin-top:10px}
 <dialog id="ruleDlg">
   <h3>ルール設定</h3>
   <p class="note">デッキの枚数チェックに使います。身内ルールに合わせて変えてください。</p>
-  <div class="row" style="justify-content:flex-start">デッキ最低枚数 <input type="number" id="ruleMin" style="width:80px"></div>
-  <div class="row" style="justify-content:flex-start">デッキ最大枚数（0で無制限） <input type="number" id="ruleMax" style="width:80px"></div>
+  <p class="note">初期値は公式ルール：ちょうど50枚／G以外の同名カードは3枚まで（ユニットは型番込みの名称で判定）／基本Gは無制限／特殊Gは合計6枚まで</p>
+  <div class="row" style="justify-content:flex-start">デッキ枚数（ちょうど） <input type="number" id="ruleSize" style="width:80px"></div>
   <div class="row" style="justify-content:flex-start">同名カードの上限 <input type="number" id="ruleCopies" style="width:80px"></div>
-  <div class="row"><button id="ruleOk" class="primary">保存</button></div>
+  <div class="row" style="justify-content:flex-start">特殊Gの合計上限 <input type="number" id="ruleSG" style="width:80px"></div>
+  <div class="row"><button id="ruleReset" class="ghost">公式ルールに戻す</button><button id="ruleOk" class="primary">保存</button></div>
 </dialog>
 
 <div id="toast"></div>
@@ -241,6 +242,11 @@ dialog .row{justify-content:flex-end;margin-top:10px}
 //  データ
 // =====================================================================
 const CARDS = window.GW_CARDS || [];
+// 基本G（Wikiにページがないのでここで用意する。何枚でも入れられる）
+if (CARDS.length) ['白','青','緑','黒','赤','茶','紫'].reverse().forEach(c => CARDS.unshift({
+  id: 'BASIC|' + c, n: `基本G（${c}）`, t: 'G', c, k: [null, null, null], r: '', basic: true,
+  x: [`(自動A):このカードは、${c}国力1を発生する。`], no: ['基本G'], s: ['基本G']
+}));
 const BY_ID = new Map(CARDS.map(c => [c.id, c]));
 const COLORS = ['白','青','緑','黒','赤','茶','紫','無'];
 const TYPES = [['U','ユニット'],['CH','キャラクター'],['C','コマンド'],['O','オペレーション'],['G','G'],['A','ACE']];
@@ -265,7 +271,9 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('gw.' + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem('gw.' + k, JSON.stringify(v)); } catch (e) { toast('保存できませんでした（ブラウザの設定を確認）'); } }
 };
-let rules = Object.assign({ min: 60, max: 0, copies: 3 }, store.get('rules', {}));
+// デッキ構築ルール（Wikiより）：ちょうど50枚／G以外の同名は3枚まで（ユニットは型番込みの名称）／基本Gは無制限／特殊Gは合計6枚まで
+const RULE_DEFAULT = { size: 50, copies: 3, specialG: 6 };
+let rules = Object.assign({}, RULE_DEFAULT, store.get('rules2', {}));
 let decks = store.get('decks', []);
 let curId = store.get('cur', null);
 if (!decks.length) decks = [newDeckObj('新しいデッキ')];
@@ -399,7 +407,7 @@ function rowHtml(c, n, deckMode) {
   const meta = [c.no.join('/'), costStr(c), c.st ? `[${c.st.join('][')}]` : '', (c.x || [])[0] || ''].filter(Boolean).join('　');
   return `<div class="crow" data-id="${esc(c.id)}">
     <div class="bar" style="background:var(--c-${c.c})"></div>
-    <div class="nm"><span class="tbadge">${esc(TYPE_NAME[c.t] || c.t)}</span>${esc(c.n)}</div>
+    <div class="nm"><span class="tbadge">${esc(TYPE_NAME[c.t] || c.t)}</span>${c.t === 'U' && c.m ? `<span class="note">${esc(c.m)}　</span>` : ''}${esc(c.n)}</div>
     <div class="act">${n || deckMode ? `<button class="pc" data-d="-1">−</button><span class="have">${n || ''}</span>` : ''}<button data-d="1" ${deckMode ? 'class="pc"' : ''}>＋</button></div>
     <div class="meta">${esc(meta)}</div>
   </div>`;
@@ -427,11 +435,18 @@ $('results').onclick = e => {
 // =====================================================================
 //  デッキ
 // =====================================================================
-const countByName = (deck, name) => Object.entries(deck.cards).reduce((s, [id, n]) => s + (BY_ID.get(id)?.n === name ? n : 0), 0);
+// 同名判定に使う名前（ユニットは「型番を含む名称」）。Gは同名制限の対象外なので null
+const sameKey = c => c.t === 'G' ? null : c.t === 'U' ? (c.m || '') + ' ' + c.n : c.n;
+const isSpecialG = c => c.t === 'G' && !c.basic;
+const countWhere = (deck, f) => Object.entries(deck.cards).reduce((s, [id, n]) => { const c = BY_ID.get(id); return s + (c && f(c) ? n : 0); }, 0);
 function addCard(id, delta) {
   const d = cur(), c = BY_ID.get(id); if (!c) return;
   const now = d.cards[id] || 0;
-  if (delta > 0 && rules.copies > 0 && countByName(d, c.n) >= rules.copies) { toast(`同名カードは${rules.copies}枚までです`); return; }
+  if (delta > 0) {
+    const k = sameKey(c);
+    if (k && rules.copies > 0 && countWhere(d, x => sameKey(x) === k) >= rules.copies) { toast(`同名カードは${rules.copies}枚までです`); return; }
+    if (isSpecialG(c) && rules.specialG > 0 && countWhere(d, isSpecialG) >= rules.specialG) { toast(`特殊Gは合計${rules.specialG}枚までです`); return; }
+  }
   const n = Math.max(0, now + delta);
   if (n) d.cards[id] = n; else delete d.cards[id];
   saveDecks(); renderAll(true);
@@ -460,9 +475,15 @@ function renderDeck() {
   // 集計
   const byType = {}, byColor = {};
   ents.forEach(([c, k]) => { byType[c.t] = (byType[c.t] || 0) + k; byColor[c.c] = (byColor[c.c] || 0) + k; });
-  const bad = n < rules.min || (rules.max && n > rules.max);
+  const sg = countWhere(d, isSpecialG), bg = countWhere(d, c => c.basic);
+  const over = new Set(); // 同名上限オーバー（ルール変更や読み込みで起きうる）
+  const byKey = {}; ents.forEach(([c, k]) => { const key = sameKey(c); if (key) byKey[key] = (byKey[key] || 0) + k; });
+  Object.entries(byKey).forEach(([key, k]) => { if (rules.copies && k > rules.copies) over.add(key); });
   $('deckStats').innerHTML =
-    `<span>合計 <b class="${bad ? 'bad' : ''}">${n}</b> / ${rules.min}${rules.max ? '〜' + rules.max : '以上'}</span>` +
+    `<span>合計 <b class="${n !== rules.size ? 'bad' : ''}">${n}</b> / ${rules.size}</span>` +
+    `<span>基本G <b>${bg}</b></span><span>特殊G <b class="${sg > rules.specialG ? 'bad' : ''}">${sg}</b> / ${rules.specialG}</span>` +
+    (over.size ? `<span class="bad">同名${rules.copies}枚超え：${esc([...over].join('、'))}</span>` : '') +
+    (n === rules.size && !over.size && sg <= rules.specialG && !missing ? '<span style="color:var(--ok)">✓ 構築OK</span>' : '') +
     TYPES.filter(([t]) => byType[t]).map(([t, l]) => `<span>${l} <b>${byType[t]}</b></span>`).join('') +
     (missing ? `<span class="bad">不明カード${missing}種</span>` : '');
   $('colorBar').innerHTML = COLORS.filter(c => byColor[c]).map(c => `<div title="${c} ${byColor[c]}" style="flex:${byColor[c]};background:var(--c-${c})"></div>`).join('');
@@ -503,7 +524,7 @@ $('delDeck').onclick = () => {
 // =====================================================================
 function deckToText(d) {
   const ents = deckEntries(d).sort((a, b) => TYPE_ORDER[a[0].t] - TYPE_ORDER[b[0].t] || total(a[0]) - total(b[0]));
-  return `# ${d.name}\n` + ents.map(([c, k]) => `${k} ${c.n} [${c.no[0]}]`).join('\n');
+  return `# ${d.name}\n` + ents.map(([c, k]) => c.basic ? `${k} ${c.n}` : `${k} ${c.n} [${c.no[0]}]`).join('\n');
 }
 function textToDeck(text) {
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -514,6 +535,8 @@ function textToDeck(text) {
     if (!m) { ng.push(l); continue; }
     const [, k, nm, no] = m;
     const nn = norm(nm);
+    const bm = /基本G|基本g/.test(nm) && /[白青緑黒赤茶紫]/.exec(nm);
+    if (bm) { const id = 'BASIC|' + bm[0]; cards[id] = (cards[id] || 0) + +k; continue; }
     let c = no && CARDS.find(c => c.no.includes(no) && norm(c.n) === nn);
     if (!c && no) c = CARDS.find(c => c.no.includes(no));
     if (!c) c = CARDS.find(c => norm(c.n) === nn);
@@ -554,8 +577,10 @@ $('codeOk').onclick = () => {
 };
 
 // ルール設定
-$('ruleBtn').onclick = () => { $('ruleMin').value = rules.min; $('ruleMax').value = rules.max; $('ruleCopies').value = rules.copies; $('ruleDlg').showModal(); };
-$('ruleOk').onclick = () => { rules = { min: +$('ruleMin').value || 0, max: +$('ruleMax').value || 0, copies: +$('ruleCopies').value || 0 }; store.set('rules', rules); $('ruleDlg').close(); renderDeck(); };
+const fillRules = r => { $('ruleSize').value = r.size; $('ruleCopies').value = r.copies; $('ruleSG').value = r.specialG; };
+$('ruleBtn').onclick = () => { fillRules(rules); $('ruleDlg').showModal(); };
+$('ruleReset').onclick = () => fillRules(RULE_DEFAULT);
+$('ruleOk').onclick = () => { rules = { size: +$('ruleSize').value || 0, copies: +$('ruleCopies').value || 0, specialG: +$('ruleSG').value || 0 }; store.set('rules2', rules); $('ruleDlg').close(); renderDeck(); };
 
 // =====================================================================
 //  カード詳細シート
