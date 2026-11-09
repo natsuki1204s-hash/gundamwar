@@ -41,8 +41,9 @@ def tokenize(raw):
         k, v = items[i]
         if k == 'text' and TYPE_RE.match(v) and i + 1 < len(items) and items[i + 1][0] == 'text' and NO_RE.match(items[i + 1][1]):
             out.append(('pre', [v, items[i + 1][1], '@@PLAIN@@'])); i += 2; continue
-        if k == 'text' and NO_RE.match(v) and (not out or out[-1] != ('pre', [])) and re.match(r'^(EX|GA|SP)-', v):
-            out.append(('pre', [v])); i += 1; continue
+        if k == 'text' and NO_RE.match(v) and (re.match(r'^(EX|GA|SP)-', v) or re.search(r'\s(白|青|緑|黒|赤|茶|紫|無)\s+[\d*]+-', v)):
+            # 囲み枠なしで型番行だけ書かれている書式
+            out.append(('pre', [v, '@@PLAIN@@'])); i += 1; continue
         if k == 'text' and STATS_RE.match(v):
             # 直前に特徴だけの行があればまとめる（例：ガンダム系 MS ／ [3][1][3]）
             out.append(('pre', [v])); i += 1; continue
