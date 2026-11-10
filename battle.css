@@ -1,0 +1,85 @@
+/* ===== 対戦卓 ===== */
+/* カードの高さは画面の高さから決める（縦に5段並ぶ） */
+#battle{--ch:clamp(56px,calc((100vh - 250px) / 5),120px);--cw:calc(var(--ch) * .713)}
+#battle{gap:0;align-items:stretch}
+.blobby{margin:auto;max-width:520px;width:100%;padding:24px 16px;display:flex;flex-direction:column;gap:14px}
+.blobby h2{margin:0;font-size:20px}
+.blobby .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.blobby input{flex:1}
+.blobby .code-in{text-transform:uppercase;letter-spacing:.1em}
+
+.bboard{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+.bside{width:300px;flex:none;border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:#171a20}
+.binfo{padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px;display:flex;flex-direction:column;gap:4px}
+.binfo .roomcode{font-size:20px;font-weight:800;letter-spacing:.08em;color:var(--accent);cursor:pointer}
+.bprev{padding:8px;display:flex;justify-content:center;border-bottom:1px solid var(--line);min-height:120px}
+.bprev .card{width:220px}
+.blog{flex:1;overflow:auto;padding:6px 10px;font-size:12px;line-height:1.5}
+.blog div{padding:1px 0;border-bottom:1px solid #22262e}
+.blog .turn{color:var(--accent);font-weight:700}
+.blog .chat{color:#9fd0ff}
+.blog .sys{color:var(--sub)}
+.bchat{display:flex;gap:4px;padding:6px;border-top:1px solid var(--line)}
+.bchat input{flex:1}
+
+.bhalf{display:flex;gap:6px;padding:3px 8px;align-items:stretch}
+.bstrip{display:flex;align-items:center;gap:8px;padding:4px 8px;font-size:12px;color:var(--sub);min-height:24px}
+.bstrip b{color:var(--text)}
+.bstrip .off{color:var(--danger)}
+.bstrip .act{color:var(--accent)}
+.zone{background:#191c23;border:1px solid #2a2f3a;border-radius:8px;padding:3px 4px 4px;display:flex;flex-direction:column;min-width:0;position:relative}
+.zone.over{border-color:var(--accent);background:#232018}
+.zone>.zl{font-size:10.5px;color:var(--sub);line-height:1.2;padding:0 2px 2px;white-space:nowrap}
+.zone>.zl{overflow:hidden;text-overflow:ellipsis}
+.zone>.zc{display:flex;gap:4px;flex-wrap:wrap;align-items:flex-start;flex:1;min-height:calc(var(--ch) + 2px);overflow:auto;align-content:flex-start}
+.zone.g{flex:0 1 200px}
+.zone.dep{flex:1 1 auto}
+.piles{display:flex;gap:4px;flex:none}
+.pile{width:calc(var(--cw) + 10px);min-width:62px;flex:none;cursor:pointer}
+.pile>.zl{font-size:10px;letter-spacing:-.04em}
+.pile .zc{justify-content:center;flex-wrap:nowrap;overflow:visible}
+.pile .num{position:absolute;right:4px;bottom:4px;background:#000c;border-radius:4px;padding:0 5px;font-weight:700;font-size:12px;pointer-events:none}
+
+.bmid{flex:1;display:flex;gap:6px;padding:2px 8px;min-height:0}
+.bfield{flex:1;display:flex;flex-direction:column;border:1px solid #3a3424;border-radius:8px;background:#1b1a17;min-width:0;min-height:0}
+.bfield>.zl{font-size:11px;color:var(--accent);padding:2px 6px}
+.bfield .zone{flex:1;border:0;border-radius:0;background:transparent}
+.bfield .zone+.zone{border-top:1px dashed #3a3424}
+.bfield .zone.over{background:#2a2518}
+
+.bhand{border-top:1px solid var(--line);background:#12141a}
+.bhand .zone{background:transparent;border:0;flex:1}
+.bctl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 8px;border-top:1px solid var(--line);background:#101217}
+.bctl input[type=number]{width:52px}
+.bctl .sep{width:1px;height:22px;background:var(--line);margin:0 2px}
+
+/* 卓の小さいカード */
+.mc{width:var(--cw);height:var(--ch);border-radius:5px;flex:none;position:relative;overflow:hidden;font-size:9px;line-height:1.2;color:#f3f3f3;border:1px solid #0009;
+  background:linear-gradient(160deg,var(--cc,#555) 0%,#15171c 90%);padding:3px;display:flex;flex-direction:column;gap:2px;cursor:grab;user-select:none}
+.mc img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.mc .mcost{font-weight:700;background:#000a;border-radius:3px;padding:0 3px;align-self:flex-start}
+.mc .mname{font-weight:700;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;text-shadow:0 1px 2px #000}
+.mc .mst{margin-top:auto;font-weight:800;background:#000a;border-radius:3px;padding:0 3px;align-self:flex-end;font-size:10px}
+.mc[data-c="白"] .mname{color:#1b1b1f;text-shadow:none}
+.mc.back{background:repeating-linear-gradient(45deg,#2b3550 0 6px,#232b42 6px 12px);border-color:#4a5675;align-items:center;justify-content:center;color:#8ea0c8;font-weight:800;font-size:11px}
+.slot{flex:none;display:flex;flex-direction:column;align-items:center;gap:2px}
+.slot.r{width:var(--ch)}
+.slot.r>.mc{transform:rotate(90deg);margin:calc(var(--ch) * -.1435) 0}
+.subs{display:flex;flex-direction:column;gap:1px;max-width:var(--ch)}
+.sub{font-size:9.5px;background:#2a2f3a;border-radius:3px;padding:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:grab;max-width:calc(var(--ch) + 10px)}
+.sub.r{background:#4a3a20}
+.mc.drop,.sub.drop{outline:2px solid var(--accent)}
+
+#bctx{position:fixed;z-index:80;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px #000a;padding:4px;display:none;flex-direction:column;min-width:170px;max-height:80vh;overflow:auto}
+#bctx.on{display:flex}
+#bctx button{background:transparent;border:0;text-align:left;padding:5px 10px;border-radius:5px}
+#bctx button:hover{background:var(--panel2)}
+#bctx .hd{font-size:11px;color:var(--sub);padding:3px 10px;border-bottom:1px solid var(--line);margin-bottom:2px}
+#bctx hr{border:0;border-top:1px solid var(--line);margin:3px 0}
+
+#pileDlg{max-width:900px}
+#pileDlg .plist{display:flex;flex-wrap:wrap;gap:6px;max-height:60vh;overflow:auto;padding:4px 0}
+#pileDlg .plist .slot{cursor:pointer}
+#pileDlg .plist .idx{font-size:10px;color:var(--sub)}
+.bbanner{background:#4a1f1c;color:#ffd5d0;padding:6px 10px;font-size:13px;display:flex;gap:8px;align-items:center}
+body:has(#battle.on) #toast{bottom:auto;top:56px}

@@ -109,7 +109,6 @@ dialog .row{justify-content:flex-end;margin-top:10px}
 #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#000d;border:1px solid var(--line);padding:8px 16px;border-radius:999px;opacity:0;transition:.2s;pointer-events:none;z-index:99}
 #toast.on{opacity:1}
 
-#battle{align-items:center;justify-content:center;color:var(--sub);flex-direction:column;gap:8px}
 
 /* ===== スマホ ===== */
 .mobbar,.mobonly{display:none}
@@ -137,6 +136,7 @@ dialog .row{justify-content:flex-end;margin-top:10px}
   nav.tabs button{padding:5px 8px}
 }
 </style>
+<link rel="stylesheet" href="battle.css">
 </head>
 <body>
 <header>
@@ -203,11 +203,8 @@ dialog .row{justify-content:flex-end;margin-top:10px}
     </div>
   </section>
 
-  <!-- ===== 対戦（次の段階で作る） ===== -->
-  <section id="battle" class="view">
-    <div style="font-size:18px">対戦卓は準備中です</div>
-    <div class="note">次の段階で、部屋コードで繋がる対戦・観戦をここに作ります</div>
-  </section>
+  <!-- ===== 対戦（中身は battle.js が作る） ===== -->
+  <section id="battle" class="view"></section>
 </main>
 
 <div id="sheet"><div class="sheet-in" id="sheetIn"></div></div>
@@ -642,5 +639,7 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
 if (!CARDS.length) document.body.innerHTML = '<p style="padding:20px">cards.js が読み込めませんでした。index.html と同じフォルダに置いてください。</p>';
 else { renderAll(); Images.init().then(() => renderAll()); }
 </script>
+<script src="lib/peerjs.min.js"></script>
+<script src="battle.js"></script>
 </body>
 </html>
