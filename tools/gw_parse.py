@@ -1,8 +1,8 @@
 """gundamwar_cards_*.json（取り込み結果）を、対戦卓で使うカードデータに整形する"""
 import json, re, sys, unicodedata
 
-TYPE_RE = re.compile(r'^(UNIT|CH[A-Z]{4,8}|CO[A-Z]{4,6}|OP[A-Z]{5,8}|GENERATION|ACE|G)\s*(\([A-Z・]+\))?$', re.I)
-FIX_TYPE = {'CHRACTER': 'CHARACTER', 'CHARCTER': 'CHARACTER', 'COMMNAD': 'COMMAND', 'COMAND': 'COMMAND'}
+TYPE_RE = re.compile(r'^(UNIT|CH[A-Z]{4,8}|CAHARACTER|CO[A-Z]{4,6}|OP[A-Z]{5,8}|GENERATION|ACE|G)\s*(\([A-Z・]+\))?$', re.I)
+FIX_TYPE = {'CHRACTER': 'CHARACTER', 'CAHARACTER': 'CHARACTER', 'CHARCTER': 'CHARACTER', 'COMMNAD': 'COMMAND', 'COMAND': 'COMMAND'}
 PREFIX_TYPE = {'EX': 'UNIT', 'U': 'UNIT', 'CH': 'CHARACTER', 'C': 'COMMAND', 'O': 'OPERATION', 'G': 'GENERATION', 'A': 'ACE'}
 NO_RE = re.compile(r'^(?:[A-Z] )?([A-Z]{1,3}-[A-Z]?\d+[A-Z]?)\s+(白|青|緑|黒|赤|茶|紫|無)?\s*(\d+|\*)?-?(\d+|\*)?-?(\d+|\*)?\s*(.*)$')
 STATS_RE = re.compile(r'^(.*?)\s*\[([^\]]*)\]\[([^\]]*)\]\[([^\]]*)\]\s*$')
