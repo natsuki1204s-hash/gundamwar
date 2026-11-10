@@ -13,13 +13,15 @@
 | `index.html` | 卓本体（これを開く） |
 | `cards.js` | 卓が読むカードデータ |
 | `images/` | 全員に見せるカード画像（`images/README.txt` 参照） |
+| `data/raw/wiki_pages.json` | Wikiから取り込んだ生ページ |
 | `data/cards_full.json` | 整形済みの全カードデータ（収録違いごと） |
 | `tools/gw_scrape.js` | Wiki取り込みスクリプト（Chromeのコンソールで実行） |
 | `tools/gw_parse.py` | 取り込み結果 → `data/cards_full.json` |
 | `tools/build_cards_js.py` | `data/cards_full.json` → `cards.js` |
+| `tools/merge_raw.py` | 新しい取り込みを足して作り直す |
+| `docs/引き継ぎ書.md` | 開発の状態と決まり（正本） |
 
-## カードデータを作り直すとき
+## カードデータを足すとき
 ```
-python3 tools/gw_parse.py gundamwar_cards_all.json data/cards_full.json
-python3 tools/build_cards_js.py data/cards_full.json cards.js
+python3 tools/merge_raw.py gundamwar_cards_extra2.json
 ```
