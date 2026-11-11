@@ -34,8 +34,39 @@ function mkLocalConn(ch, me, other, meta) {
     metadata: meta, open: true,
     on(ev, fn) { (h[ev] = h[ev] || []).push(fn); },
     _emit(ev, x) { (h[ev] || []).forEach(f => f(x)); },
-    send(d) { ch.postMessage({ to: other, from: me, k: 'data', d: JSON.parse(JSON.stringify(d)) }); },
+    send(d) {   // PeerJS と同じく、16300バイトを超える1通は送らずに落とす（試験モードでも本番と同じ不具合が出るように）
+      const j = JSON.stringify(d);
+      if (new TextEncoder().encode(j).length >= 16300) { console.error('Message too big for JSON channel'); return; }
+      ch.postMessage({ to: other, from: me, k: 'data', d: JSON.parse(j) });
+    },
     close() { ch.postMessage({ to: other, from: me, k: 'bye' }); this._emit('close'); }
+  };
+}
+// PeerJS（JSON の通信）は1通が16300バイトを超えると黙って捨てる。盤面は記録が溜まるとすぐ超えるので、
+// 文字列にしてから小分けにして送り、受け側で組み立て直す（順番どおり届く通信なので番号順に並べるだけ）
+const PART = 3000; // 文字数。日本語は1文字3バイト、送る時の " のエスケープ込みでも 16300 に収まる
+function wrapConn(c) {
+  const h = [], parts = new Map();
+  const emit = d => h.forEach(f => { try { f(d); } catch (e) { console.error(e); } });
+  c.on('data', d => {
+    if (!d || d.k !== 'part') { emit(d); return; }
+    let p = parts.get(d.id); if (!p) parts.set(d.id, p = []);
+    p[d.i] = d.d;
+    if (p.filter(x => x != null).length < d.n) return;
+    parts.delete(d.id);
+    try { emit(JSON.parse(p.join(''))); } catch (e) { console.error('組み立てに失敗', e); }
+  });
+  c.on('error', e => console.error('通信のエラー', e));
+  return {
+    get metadata() { return c.metadata; },
+    on(ev, fn) { if (ev === 'data') h.push(fn); else c.on(ev, fn); },
+    send(d) {
+      const j = JSON.stringify(d);
+      if (j.length <= PART) { c.send(d); return; }
+      const id = rid(), n = Math.ceil(j.length / PART);
+      for (let i = 0; i < n; i++) c.send({ k: 'part', id, i, n, d: j.slice(i * PART, (i + 1) * PART) });
+    },
+    close() { c.close(); }
   };
 }
 const Net = {
@@ -47,7 +78,7 @@ const Net = {
         if (m.k === 'hello') {
           const c = mkLocalConn(ch, 'host', m.from, m.meta); conns.set(m.from, c);
           ch.postMessage({ to: m.from, from: 'host', k: 'ok' });
-          onConn(c); setTimeout(() => c._emit('open'), 0);
+          onConn(wrapConn(c)); setTimeout(() => c._emit('open'), 0);
         } else if (m.k === 'data') conns.get(m.from)?._emit('data', m.d);
         else if (m.k === 'bye') { conns.get(m.from)?._emit('close'); conns.delete(m.from); }
       };
@@ -59,7 +90,7 @@ const Net = {
       const p = new Peer(PFX + code, PEER_OPT);
       let opened = false;
       p.on('open', () => { opened = true; res({ destroy: () => p.destroy() }); });
-      p.on('connection', onConn);
+      p.on('connection', c => onConn(wrapConn(c)));
       p.on('disconnected', () => { if (opened && !p.destroyed) setTimeout(() => p.reconnect(), 2000); });
       p.on('error', e => { if (!opened) { p.destroy(); rej(e); } else console.warn(e); });
     });
@@ -71,7 +102,7 @@ const Net = {
       const t = setTimeout(() => { ch.close(); rej({ type: 'peer-unavailable' }); }, 2000);
       ch.onmessage = e => {
         const m = e.data; if (m.to !== me) return;
-        if (m.k === 'ok') { clearTimeout(t); res(c); }
+        if (m.k === 'ok') { clearTimeout(t); res(wrapConn(c)); }
         else if (m.k === 'data') c._emit('data', m.d);
         else if (m.k === 'bye') c._emit('close');
       };
@@ -81,12 +112,15 @@ const Net = {
     if (!window.Peer) return Promise.reject(new Error('通信の部品（PeerJS）が読み込めませんでした'));
     return new Promise((res, rej) => {
       const p = new Peer(PEER_OPT);
+      let done = false;
       const t = setTimeout(() => { p.destroy(); rej(new Error('つながりませんでした（時間切れ）')); }, 20000);
       p.on('open', () => {
         const c = p.connect(PFX + code, { metadata: meta, reliable: true, serialization: 'json' });
-        c.on('open', () => { clearTimeout(t); res(c); });
+        c.on('open', () => { clearTimeout(t); done = true; res(wrapConn(c)); });
       });
-      p.on('error', e => { clearTimeout(t); p.destroy(); rej(e); });
+      // つながった後のエラー（接続サーバーとの切断など）で Peer を壊すと、卓との通信まで切れる
+      p.on('error', e => { if (done) { console.warn(e); return; } clearTimeout(t); p.destroy(); rej(e); });
+      p.on('disconnected', () => { if (done && !p.destroyed) setTimeout(() => p.reconnect(), 2000); });
     });
   }
 };
