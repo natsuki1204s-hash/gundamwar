@@ -23,7 +23,7 @@ for k in order:
     c = {'id': cid, 'n': p['name'], 't': TY.get(p['type'], p['type']), 'c': p['color'],
          'k': [None if x in (None, '*') else int(x) if str(x).isdigit() else x for x in p['cost']],
          'r': p['rarity'], 'x': p['text'], 'no': g['nos'], 's': g['sets']}
-    for src_k, dst_k in (('model', 'm'), ('stats', 'st'), ('tags', 'tg'), ('traits', 'tr'), ('alt', 'alt')):
+    for src_k, dst_k in (('dual', 'd'), ('model', 'm'), ('stats', 'st'), ('tags', 'tg'), ('traits', 'tr'), ('alt', 'alt')):
         if p.get(src_k): c[dst_k] = p[src_k]
     out.append(c)
 open(dst, 'w', encoding='utf-8').write('window.GW_CARDS=' + json.dumps(out, ensure_ascii=False, separators=(',', ':')) + ';\n')

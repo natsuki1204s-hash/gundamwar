@@ -83,3 +83,29 @@
 #pileDlg .plist .idx{font-size:10px;color:var(--sub)}
 .bbanner{background:#4a1f1c;color:#ffd5d0;padding:6px 10px;font-size:13px;display:flex;gap:8px;align-items:center}
 body:has(#battle.on) #toast{bottom:auto;top:56px}
+
+/* フェイズの帯・ターンプレイヤー */
+.bphase{display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:4px 8px;border-bottom:1px solid var(--line);background:#14171d;font-size:12px}
+.bphase .who{background:#3a3424;color:var(--accent);border-radius:4px;padding:1px 8px;font-weight:700;margin-right:6px}
+.bphase.mine .who{background:var(--accent);color:#1b1a17}
+.bphase .ph{padding:1px 6px;border-radius:4px;color:var(--sub);border:1px solid transparent}
+.bphase .ph.done{color:#6b7280}
+.bphase .ph.on{color:#1b1a17;background:var(--accent);font-weight:800}
+.bphase.mine .ph{cursor:pointer}
+.bphase.mine .ph:not(.on):hover{border-color:var(--accent)}
+.bphase .ar{color:#4b5160}
+.bhalf.active{box-shadow:inset 3px 0 0 var(--accent);background:#1d1b16}
+/* セットグループ */
+.gst{font-size:9.5px;font-weight:800;color:var(--accent);text-align:center;white-space:nowrap}
+.bprev{max-height:58vh;overflow:auto;align-items:flex-start}
+.bprev .grp{display:flex;flex-direction:column;gap:6px;align-items:center}
+.bprev .grp .gh{font-size:12px;color:var(--sub)}
+.bprev .grp .gh b{color:var(--accent)}
+/* 見ているカード・公開 */
+.pdlg{max-width:900px}
+.pdlg .plist{display:flex;flex-wrap:wrap;gap:8px;max-height:60vh;overflow:auto;padding:4px 0}
+.pdlg .plist .idx{font-size:10px;color:var(--sub);max-width:var(--cw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pdlg .plist .slot{cursor:pointer}
+.pdlg .lk{display:flex;gap:2px;margin-top:2px}
+.pdlg .lk button{padding:1px 5px;font-size:11px}
+.pdlg,#pileDlg{--ch:120px;--cw:86px}

@@ -4,7 +4,8 @@ import json, re, sys, unicodedata
 TYPE_RE = re.compile(r'^(UNIT|CH[A-Z]{4,8}|CAHARACTER|CO[A-Z]{4,6}|OP[A-Z]{5,8}|GENERATION|ACE|G)\s*(\([A-Z・]+\))?$', re.I)
 FIX_TYPE = {'CHRACTER': 'CHARACTER', 'CAHARACTER': 'CHARACTER', 'CHARCTER': 'CHARACTER', 'COMMNAD': 'COMMAND', 'COMAND': 'COMMAND'}
 PREFIX_TYPE = {'EX': 'UNIT', 'U': 'UNIT', 'CH': 'CHARACTER', 'C': 'COMMAND', 'O': 'OPERATION', 'G': 'GENERATION', 'A': 'ACE'}
-NO_RE = re.compile(r'^(?:[A-Z] )?([A-Z]{1,3}-[A-Z]?\d+[A-Z]?)\s+(白|青|緑|黒|赤|茶|紫|無)?\s*(\d+|\*)?-?(\d+|\*)?-?(\d+|\*)?\s*(.*)$')
+# デュアルカード（2色の指定国力）は「黒2-赤1-4-0」のように2色目が挟まる → dual
+NO_RE = re.compile(r'^(?:[A-Z] )?([A-Z]{1,3}-[A-Z]?\d+[A-Z]?)\s+(白|青|緑|黒|赤|茶|紫|無)?(?:白|青|緑|黒|赤|茶|紫)?\s*(?:(?:白|青|緑|黒|赤|茶|紫)(?=\d))?(\d+|\*)?(?:-(白|青|緑|黒|赤|茶|紫)(\d+))?-?(\d+|\*)?-?(\d+|\*)?\s*(.*)$')
 STATS_RE = re.compile(r'^(.*?)\s*\[([^\]]*)\]\[([^\]]*)\]\[([^\]]*)\]\s*$')
 EFFECT_START = re.compile(r'^[（(【《]')
 
@@ -62,8 +63,12 @@ def header_of(item):
     else:
         return None
     m = NO_RE.match(nl)
-    return {'type_raw': t.upper(), 'no': m[1], 'color': m[2] or '',
-            'cost': [m[3], m[4], m[5]], 'rarity': m[6].strip()}
+    rarity, color = m[8].strip(), m[2] or ''
+    m2 = re.fullmatch(r'(\S+) (白|青|緑|黒|赤|茶|紫)', rarity)  # G の「G-5 C 紫」（レア度の後に色）
+    if m2 and not color:
+        rarity, color = m2[1], m2[2]
+    return {'type_raw': t.upper(), 'no': m[1], 'color': color,
+            'cost': [m[3], m[6], m[7]], 'rarity': rarity, 'dual': [m[4], int(m[5])] if m[4] else None}
 
 
 def stats_of(item):
@@ -118,7 +123,7 @@ def parse_card(c):
             if '@@PLAIN@@' in items[h][1] and p['text'] and not re.search(r'[:：。【《(（]', p['text'][0]):
                 p['traits'] = p['text'].pop(0).split()
             # 変形などの第2形態：形態名 → (テキスト) → 戦闘力
-            if len(stat_idx) > 1 and stat_idx[1] - s0 <= 3:
+            if len(stat_idx) > 1 and stat_idx[1] - s0 <= 8 and all(it[0] == 'text' for it in body[s0 + 1:stat_idx[1]]):
                 mid = [it[1] for it in body[s0 + 1:stat_idx[1]] if it[0] == 'text']
                 st2 = stats_of(body[stat_idx[1]])
                 p['alt'] = {'name': mid[0] if mid else '', 'text': mid[1:], 'tags': st2['tags'], 'stats': st2['stats']}

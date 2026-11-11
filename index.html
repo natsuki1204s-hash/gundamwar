@@ -77,6 +77,8 @@ main{height:calc(100% - 48px)}
 .card .traits{font-size:10.5px;background:#0006;border-radius:4px;padding:1px 5px}
 .card .text{flex:1;overflow:auto;background:#0008;border-radius:6px;padding:5px 6px;line-height:1.45}
 .card .text p{margin:0 0 3px}
+.card .text .alt{border-top:1px dashed #fff6;margin-top:4px;padding-top:3px}
+.card .text .alt .sub{font-weight:bold;opacity:.85;background:none;max-width:none;white-space:normal;font-size:inherit;padding:0;cursor:auto}
 .card .foot{display:flex;justify-content:space-between;align-items:center;font-size:11px}
 .card .st{font-weight:800;font-size:14px;background:#000a;border-radius:4px;padding:0 6px;letter-spacing:.05em}
 .card[data-c="白"] .name,.card[data-c="白"] .model{color:#1b1b1f;text-shadow:none}
@@ -254,7 +256,9 @@ const kata = s => s.replace(/[ぁ-ゖ]/g, ch => String.fromCharCode(ch.charCodeA
 const norm = s => kata((s||'').normalize('NFKC').toLowerCase());
 const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const total = c => c.k && c.k[1] != null ? +c.k[1] : -1;
-const costStr = c => c.k && c.k[0] != null ? c.k.join('-') : '';
+// デュアルカード（2色の指定国力）は c.d = ['赤', 1]。「黒2赤1-4-0」と出す
+const costStr = c => c.k && c.k[0] != null ? (c.d ? `${c.c}${c.k[0]}${c.d[0]}${c.d[1]}-${c.k[1]}-${c.k[2]}` : c.k.join('-')) : '';
+const altHtml = c => c.alt ? `<div class="sub">${esc(c.alt.name || '別形態')}　${esc((c.alt.tags || []).join(' '))} [${esc((c.alt.stats || []).join(']['))}]</div>${(c.alt.text || []).map(t => `<p>${fmtText(t)}</p>`).join('')}` : '';
 const numKey = no => { const m = /^([A-Z]+)-([A-Z]?)(\d+)/.exec(no || ''); return m ? [m[1], m[2], +m[3]] : [no, '', 0]; };
 CARDS.forEach(c => {
   c._q = norm([c.n, c.m, (c.x||[]).join(' '), (c.tr||[]).join(' '), (c.tg||[]).join(' '), (c.no||[]).join(' '), c.alt ? c.alt.name : ''].join(' '));
@@ -356,7 +360,7 @@ function cardFace(c, opt = {}) {
     <div><div class="model">${esc(c.m || '')}</div><div class="name">${esc(c.n)}</div></div>
     <div class="art">${esc(c.c)}</div>
     ${c.tr ? `<div class="traits">${esc(c.tr.join(' '))}</div>` : ''}
-    <div class="text">${(c.x || []).map(t => `<p>${fmtText(t)}</p>`).join('') || '<p style="opacity:.6">（テキストなし）</p>'}</div>
+    <div class="text">${(c.x || []).map(t => `<p>${fmtText(t)}</p>`).join('') || '<p style="opacity:.6">（テキストなし）</p>'}${c.alt ? `<div class="alt">${altHtml(c)}</div>` : ''}</div>
     <div class="foot"><span>${esc((c.tg || []).join(' '))}</span>${st ? `<span class="st">${esc(st)}</span>` : ''}</div>
   </div>`;
 }
@@ -387,7 +391,7 @@ $('setSel').innerHTML += allSets.map(s => `<option>${esc(s)}</option>`).join('')
 function filtered() {
   const words = norm(F.q).split(/\s+/).filter(Boolean);
   let r = CARDS.filter(c =>
-    (!F.colors.size || F.colors.has(c.c)) &&
+    (!F.colors.size || F.colors.has(c.c) || (c.d && F.colors.has(c.d[0]))) &&
     (!F.types.size || F.types.has(c.t)) &&
     (F.cmin == null || total(c) >= F.cmin) &&
     (F.cmax == null || (total(c) >= 0 && total(c) <= F.cmax)) &&
@@ -587,13 +591,13 @@ function openSheet(id) {
   const c = BY_ID.get(id); if (!c) return;
   sheetId = id;
   const n = cur().cards[id] || 0;
-  const alt = c.alt ? `<div class="sub">${esc(c.alt.name || '別形態')}　${esc((c.alt.tags || []).join(' '))} [${esc((c.alt.stats || []).join(']['))}]</div>${(c.alt.text || []).map(t => `<p>${fmtText(t)}</p>`).join('')}` : '';
+  const alt = altHtml(c);
   $('sheetIn').innerHTML = `
     ${cardFace(c)}
     <div class="sheet-info">
       <div class="sub">${esc(c.m || '')}</div>
       <h2>${esc(c.n)}</h2>
-      <div class="sub">${esc(TYPE_NAME[c.t] || c.t)}　<span class="dot" style="background:var(--c-${c.c})"></span>${esc(c.c)}　${c.k && c.k[0] != null ? '指定' + c.k[0] + '・合計' + c.k[1] + '・コスト' + c.k[2] : ''}　${esc(c.r)}</div>
+      <div class="sub">${esc(TYPE_NAME[c.t] || c.t)}　<span class="dot" style="background:var(--c-${c.c})"></span>${esc(c.c)}　${c.k && c.k[0] != null ? '指定' + (c.d ? `${c.c}${c.k[0]}・${c.d[0]}${c.d[1]}` : c.k[0]) + '・合計' + c.k[1] + '・コスト' + c.k[2] : ''}　${esc(c.r)}</div>
       ${c.tr ? `<div class="sub">特徴：${esc(c.tr.join(' '))}</div>` : ''}
       <div class="txt">${(c.x || []).map(t => `<p>${fmtText(t)}</p>`).join('') || '<p class="note">（テキストなし）</p>'}${alt}</div>
       ${c.st ? `<div>${esc((c.tg || []).join(' '))}　<b>[${esc(c.st.join(']['))}]</b></div>` : ''}
