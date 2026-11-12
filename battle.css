@@ -38,7 +38,9 @@
 .pile{width:calc(var(--cw) + 10px);min-width:62px;flex:none;cursor:pointer}
 .pile>.zl{font-size:10px;letter-spacing:-.04em}
 .pile .zc{justify-content:center;flex-wrap:nowrap;overflow:visible}
-.pile .num{position:absolute;right:4px;bottom:4px;background:#000c;border-radius:4px;padding:0 5px;font-weight:700;font-size:12px;pointer-events:none}
+.pile .num{position:absolute;left:0;right:0;top:calc(50% + 6px);transform:translateY(-50%);text-align:center;font-weight:900;font-size:clamp(20px,calc(var(--ch) * .34),38px);line-height:1;color:#fff;pointer-events:none;
+  text-shadow:0 0 2px #000,0 0 4px #000,0 0 8px #000,0 0 12px #000a;font-variant-numeric:tabular-nums}
+.pile .num.zero{color:#8b93a3;font-size:clamp(16px,calc(var(--ch) * .24),26px)}
 
 .bmid{flex:1;display:flex;gap:6px;padding:2px 8px;min-height:0}
 .bfield{flex:1;display:flex;flex-direction:column;border:1px solid #3a3424;border-radius:8px;background:#1b1a17;min-width:0;min-height:0}
@@ -85,6 +87,8 @@
 #pileDlg .plist{display:flex;flex-wrap:wrap;gap:6px;max-height:60vh;overflow:auto;padding:4px 0}
 #pileDlg .plist .slot{cursor:pointer}
 #pileDlg .plist .idx{font-size:10px;color:var(--sub)}
+#pileDlg .lk{display:flex;gap:2px;margin-top:2px}
+#pileDlg .lk button{padding:1px 5px;font-size:11px}
 .bbanner{background:#4a1f1c;color:#ffd5d0;padding:6px 10px;font-size:13px;display:flex;gap:8px;align-items:center}
 body:has(#battle.on) #toast{bottom:auto;top:56px}
 

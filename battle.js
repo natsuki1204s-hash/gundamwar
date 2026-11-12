@@ -262,11 +262,38 @@ function apply(a, who) {
       log(`── 第${S.turn}ターン ${S.seats[nx].name || `席${nx + 1}`}のターン（${PHASES[0]}：全リロール）──`, 'turn');
       return;
     }
+    // ── 捨て山（非公開）を持ち主が触る。見ている間だけ、見ているカードの中身を持ち主に送る（seat.pk）
+    case 'dpeek': {
+      const arr = seatObj.z.discard;
+      if (a.off) { seatObj.pk = null; return; }
+      if (!a.n) { seatObj.pk = 'all'; log(`${nm}が捨て山を全部見ています（${arr.length}枚）`); }
+      else { seatObj.pk = arr.slice(-a.n).map(c => c.u); log(`${nm}が捨て山の上から${seatObj.pk.length}枚を見ています`); }
+      return;
+    }
+    case 'pdraw': {   // 捨て山の上から手札へ
+      const arr = seatObj.z.discard, n = Math.min(a.n | 0, arr.length);
+      if (n < 1) return '捨て山がありません';
+      const got = arr.slice(-n).reverse();
+      for (const o of new Set(got.map(c => c.o))) if (!canReach(o)) return `${S.seats[o].name || '持ち主'}がいないので動かせません`;
+      arr.splice(arr.length - n, n);
+      got.forEach(c => sendGain(c.o, { u: c.u, id: c.id }, 'hand'));
+      log(`${nm}が捨て山の上から${n}枚を手札に加えました`);
+      return;
+    }
+    case 'preorder': {   // 置き場の中の並べ替え（d：上へ+1／下へ-1、to：'top'|'bottom'）
+      const f = findCard(S, a.u); if (!f || f.parent || !PILES.includes(f.zone)) return;
+      const [c] = f.arr.splice(f.i, 1), L = f.arr.length;
+      const j = a.to === 'top' ? L : a.to === 'bottom' ? 0 : Math.max(0, Math.min(L, f.i + (a.d | 0)));
+      f.arr.splice(j, 0, c);
+      log(`${nm}が${zoneLabel(f.seat, f.zone)}の並びを変えました`);
+      return;
+    }
+    case 'pshuffle': { const z = PILES.includes(a.zone) ? a.zone : 'discard'; shuffle(seatObj.z[z]); if (z === 'discard') seatObj.pk = null; log(`${nm}が${ZONES[z]}を切りました`); return; }
     case 'rerollAll': eachCard(seatObj, c => c.r = false); log(`${nm}が自分のカードを全てリロール`); return;
     case 'newGame':
       if (who.seat !== 0) return '新しいゲームは部屋を作った人だけが始められます';
       S.game++; S.turn = 0; S.active = null; S.phase = null; S.first = null; S.reveal = null;
-      S.seats.forEach(s => { s.z = emptyZones(); s.ready = false; s.dn = 0; s.hn = 0; s.deckName = ''; s.su = null; s.mull = 0; });
+      S.seats.forEach(s => { s.z = emptyZones(); s.ready = false; s.dn = 0; s.hn = 0; s.deckName = ''; s.su = null; s.mull = 0; s.pk = null; });
       log('── 新しいゲーム。デッキを選んで準備してください ──', 'turn');
       return;
   }
@@ -280,10 +307,12 @@ function sendGain(seat, card, to) {
 // 見る人ごとに、他人の裏向きカードの中身を消して送る
 function viewFor(seat) {
   const s = JSON.parse(JSON.stringify(B.S));
-  s.seats.forEach(st => Object.entries(st.z).forEach(([z, arr]) => arr.forEach(c => {
-    if (SECRET.includes(z) || (c.f && c.o !== seat)) c.id = null;
-    (c.s || []).forEach(x => { if (SECRET.includes(z) || (x.f && x.o !== seat)) x.id = null; });
-  })));
+  // 捨て山は、持ち主が見ている（pk）カードだけ持ち主に中身を送る。相手・観戦者には送らない
+  s.seats.forEach((st, si) => Object.entries(st.z).forEach(([z, arr]) => {
+    const peek = si === seat && st.pk ? (st.pk === 'all' ? null : new Set(st.pk)) : undefined;
+    const hide = x => (SECRET.includes(z) && !(peek === null || (peek && peek.has(x.u)))) || (x.f && x.o !== seat);
+    arr.forEach(c => { if (hide(c)) c.id = null; (c.s || []).forEach(x => { if (hide(x)) x.id = null; }); });
+  }));
   return s;
 }
 function broadcast() {
@@ -365,7 +394,7 @@ async function createRoom(resume) {
   B.role = 'host'; B.code = code; B.seat = 0;
   if (resume) { B.S = resume.S; B.rec = resume.rec || []; }
   else B.S = { code, game: 1, turn: 0, active: null, seats: [emptySeat(), emptySeat()], log: [], spect: [] };
-  B.S.seats[0].name = name; B.S.seats[0].online = true;
+  B.S.seats[0].name = name; B.S.seats[0].online = true; B.S.seats[0].pk = null;
   B.S.seats.forEach((s, i) => { if (i) s.online = false; });
   B.priv = loadPriv(); if (B.priv && B.priv.game !== B.S.game) B.priv = null;
   log(resume ? `${name}が部屋 ${code} を開き直しました` : `${name}が部屋 ${code} を作りました`, 'sys');
@@ -381,7 +410,7 @@ function onConn(conn) {
       if (i > 0) B.conns.filter(y => y.seat === i).forEach(y => { y.seat = null; y.role = 'gone'; try { y.conn.close(); } catch (e) {} });
       if (i < 0) i = B.S.seats.findIndex((s, i) => i > 0 && !s.name);
       if (i < 0) i = B.S.seats.findIndex((s, i) => i > 0 && !s.online);
-      if (i > 0) { seat = i; role = 'player'; const s = B.S.seats[i]; if (s.name !== name) { s.name = name; } s.online = true; }
+      if (i > 0) { seat = i; role = 'player'; const s = B.S.seats[i]; if (s.name !== name) { s.name = name; } s.online = true; s.pk = null; }
     }
     const x = { conn, seat, name, role }; B.conns.push(x);
     conn.send({ k: 'welcome', seat, role, code: B.code });
@@ -499,14 +528,14 @@ function zoneHtml(seat, z, cls = '') {
   if (PILES.includes(z)) {
     const top = arr[arr.length - 1];
     const face = !top ? '' : SECRET.includes(z) ? '<div class="slot"><div class="mc back">GW</div></div>' : slot(top, 'pub').replace('draggable="true"', 'draggable="false"');
-    return `<div class="zone pile" data-seat="${seat}" data-zone="${z}" data-pile="1"><div class="zl">${ZONES[z]}</div><div class="zc">${face}</div><span class="num">${arr.length}</span></div>`;
+    return `<div class="zone pile" data-seat="${seat}" data-zone="${z}" data-pile="1"><div class="zl">${ZONES[z]}</div><div class="zc">${face}</div><span class="num${arr.length ? '' : ' zero'}">${arr.length}</span></div>`;
   }
   return `<div class="zone ${cls}" data-seat="${seat}" data-zone="${z}"><div class="zl">${ZONES[z]}${arr.length ? `（${arr.length}）` : ''}</div><div class="zc">${arr.map(c => slot(c, 'pub')).join('')}</div></div>`;
 }
 function deckPile(seat) {
   const s = VS.seats[seat], mine = seat === B.seat && B.priv;
   const n = mine ? B.priv.deck.length : s.dn;
-  return `<div class="zone pile" data-seat="${seat}" data-zone="deck" ${mine ? 'data-mydeck="1"' : ''}><div class="zl">本国</div><div class="zc">${n ? `<div class="slot" ${mine ? 'draggable="true" data-src="decktop"' : ''}><div class="mc back">GW</div></div>` : ''}</div><span class="num">${n}</span></div>`;
+  return `<div class="zone pile" data-seat="${seat}" data-zone="deck" ${mine ? 'data-mydeck="1"' : ''}><div class="zl">本国</div><div class="zc">${n ? `<div class="slot" ${mine ? 'draggable="true" data-src="decktop"' : ''}><div class="mc back">GW</div></div>` : ''}</div><span class="num${n ? '' : ' zero'}">${n}</span></div>`;
 }
 function rowHtml2(seat) {
   return `<div class="bhalf${VS.active === seat ? ' active' : ''}">
@@ -589,6 +618,7 @@ function render() {
   $('bChatIn').value = chatVal; if (chatFocus) $('bChatIn').focus();
   if (B.prev) showPrev(B.prev.cid, B.prev.u);
   wire();
+  if (dlg.open && B.pileView) { const pl = dlg.querySelector('.plist'), sc = pl && pl.scrollTop; openPile(B.pileView.seat, B.pileView.z); const p2 = dlg.querySelector('.plist'); if (p2) p2.scrollTop = sc || 0; }
   checkReveal(S);
 }
 
@@ -665,6 +695,7 @@ root.addEventListener('mouseover', e => {
 // クリックメニュー
 const ctx = document.createElement('div'); ctx.id = 'bctx'; document.body.appendChild(ctx);
 function menu(x, y, title, items) {
+  const host = document.querySelector('dialog[open]') || document.body; if (ctx.parentNode !== host) host.appendChild(ctx);
   ctx.innerHTML = `<div class="hd">${esc(title)}</div>` + items.map((it, i) => it === '-' ? '<hr>' : `<button data-i="${i}">${esc(it[0])}</button>`).join('');
   ctx.classList.add('on');
   const w = ctx.offsetWidth, h = ctx.offsetHeight;
@@ -714,18 +745,21 @@ function deckCardMenu(u, x, y, after) {
 
 // 本国・捨て札置き場の一覧
 const dlg = document.createElement('dialog'); dlg.id = 'pileDlg'; document.body.appendChild(dlg);
-function openList(title, note, cards, onCard, extra = '') {
+function openList(title, note, cards, onCard, extra = '', under = null, onBtn = null, idx = i => i + 1) {
   dlg.innerHTML = `<h3>${esc(title)}</h3><p class="note">${esc(note)}</p>
-    <div class="plist">${cards.map((c, i) => `<div><div class="idx">${i + 1}</div>${slot(c, 'list').replace(/draggable="true"/g, 'draggable="false"')}</div>`).join('') || '<div class="note">（なし）</div>'}</div>
+    <div class="plist">${cards.map((c, i) => `<div><div class="idx">${idx(i)}</div>${slot(c, 'list').replace(/draggable="true"/g, 'draggable="false"')}${under ? under(c, i) : ''}</div>`).join('') || '<div class="note">（なし）</div>'}</div>
     <div class="row">${extra}<button id="pClose" class="primary">閉じる</button></div>`;
   if (!dlg.open) dlg.showModal();
   dlg.querySelector('#pClose').onclick = () => dlg.close();
-  dlg.querySelector('.plist').onclick = e => { const s = e.target.closest('[data-u]'); if (s) onCard(s.dataset.u, e.clientX, e.clientY); };
+  dlg.querySelector('.plist').onclick = e => {
+    const b = e.target.closest('button[data-b]'); if (b) { onBtn && onBtn(b.dataset.b, b.dataset.u); return; }
+    const s = e.target.closest('[data-u]'); if (s) onCard(s.dataset.u, e.clientX, e.clientY);
+  };
   dlg.querySelector('.plist').onmouseover = e => { const t = e.target.closest('[data-cid]'); if (t) showPrev(t.dataset.cid); };
 }
 let deckViewN = 0;
 function openDeckView(n) {
-  deckViewN = n;
+  deckViewN = n; B.pileView = null;
   const cards = n ? B.priv.deck.slice(0, n) : B.priv.deck;
   openList(n ? `本国の上${cards.length}枚` : `本国（${cards.length}枚）`, '左が一番上です。カードを押すと動かせます。中身はあなたにしか見えません。', cards,
     (u, x, y) => deckCardMenu(u, x, y, () => openDeckView(deckViewN)),
@@ -734,11 +768,60 @@ function openDeckView(n) {
   if (s) s.onclick = () => { shuffle(B.priv.deck); savePriv(); act({ t: 'note', msg: '本国を切りました' }); dlg.close(); };
 }
 function openPile(seat, z) {
-  const arr = VS.seats[seat].z[z];
-  const note = (SECRET.includes(z) ? '非公開の置き場なので、中身は誰にも見えません（持ち主にも）。' : '') + '右が一番上です。' + (isPlayer() ? 'カードを押すと動かせます。' : '');
-  const draw = () => openList(`${zoneLabel(seat, z)}（${arr.length}枚）`, note, arr,
-    isPlayer() ? (u, x, y) => { pubMenu(u, x, y); } : () => {});
-  draw();
+  B.pileView = { seat, z };
+  const st = VS.seats[seat], arr = st.z[z];
+  // 自分の捨て山を見ている時：見ているカードだけ並べ、並べ替えと手札へのボタンを付ける
+  if (z === 'discard' && seat === mySeat() && isPlayer() && st.pk) {
+    const cards = arr.filter(c => c.id), hidden = arr.length - cards.length;
+    const under = c => { const i = arr.indexOf(c); return `<div class="lk"><button data-b="down" data-u="${esc(c.u)}" ${i ? '' : 'disabled'} title="1枚下へ">◀</button><button data-b="hand" data-u="${esc(c.u)}">手札へ</button><button data-b="up" data-u="${esc(c.u)}" ${i < arr.length - 1 ? '' : 'disabled'} title="1枚上へ">▶</button></div>`; };
+    openList(`${zoneLabel(seat, z)}（${arr.length}枚）を見ています`,
+      `中身はあなたにだけ見えています（相手と観戦の人には見えません）。右が一番上です。◀ ▶ で並べ替え、カードを押すと手札や場へ動かせます。${hidden ? `この下にまだ${hidden}枚あります（見ていません）。` : ''}閉じると見るのをやめます。`,
+      cards, (u, x, y) => discardCardMenu(u, x, y),
+      '<button id="pShufD" style="margin-right:auto">切ってから閉じる</button>', under,
+      (b, u) => b === 'hand' ? act({ t: 'leave', u, to: 'hand' }) : act({ t: 'preorder', u, d: b === 'up' ? 1 : -1 }),
+      i => `上から${cards.length - i}`);
+    dlg.querySelector('#pShufD').onclick = () => { act({ t: 'pshuffle', zone: 'discard' }); dlg.close(); };
+    return;
+  }
+  const note = (SECRET.includes(z) ? '非公開の置き場なので、中身は見えません。' + (seat === mySeat() && isPlayer() ? '自分の捨て山は、束を押して「見る」を選ぶと中身を見られます。' : '') : '') + '右が一番上です。' + (isPlayer() ? 'カードを押すと動かせます。' : '');
+  openList(`${zoneLabel(seat, z)}（${arr.length}枚）`, note, arr, isPlayer() ? (u, x, y) => { pubMenu(u, x, y); } : () => {});
+}
+// 閉じたら捨て山を見るのをやめる
+dlg.addEventListener('close', () => {
+  const pv = B.pileView; B.pileView = null;
+  if (pv && pv.z === 'discard' && pv.seat === mySeat() && isPlayer() && VS && VS.seats[pv.seat].pk) act({ t: 'dpeek', off: true });
+});
+// 自分の捨て山の束を押した時
+function discardPileMenu(x, y) {
+  const me = mySeat(), arr = VS.seats[me].z.discard, n = N();
+  const look = k => { act({ t: 'dpeek', n: k }); openPile(me, 'discard'); };
+  menu(x, y, `捨て山（${arr.length}枚）`, [
+    ['上の1枚を手札へ（ドロー）', () => act({ t: 'pdraw', n: 1 })],
+    ...(n > 1 ? [[`上から${n}枚を手札へ`, () => act({ t: 'pdraw', n })]] : []),
+    '-',
+    ['上の1枚を見る', () => look(1)],
+    ...(n > 1 ? [[`上から${n}枚を見る`, () => look(n)]] : []),
+    ['全部見る（並べ替え・取り出し）', () => look(0)],
+    ['切る', () => act({ t: 'pshuffle', zone: 'discard' })],
+    '-',
+    ['見ないで一覧を開く', () => openPile(me, 'discard')]
+  ]);
+}
+// 見ている捨て山のカードを押した時
+function discardCardMenu(u, x, y) {
+  const f = findCard(VS, u); if (!f) return;
+  const c = f.c;
+  menu(x, y, cname(c), [
+    ['手札に加える', () => act({ t: 'leave', u, to: 'hand' })],
+    ...(c.id ? [['公開して手札に加える', () => { act({ t: 'reveal', ids: [c.id], what: '捨て山から手札に加えるカード' }); act({ t: 'leave', u, to: 'hand' }); }]] : []),
+    ['本国の上へ', () => act({ t: 'leave', u, to: 'top' })],
+    ['本国の下へ', () => act({ t: 'leave', u, to: 'bottom' })],
+    '-',
+    ...['deploy', 'G', 'space', 'earth', 'junk', 'removed'].map(z => [`${ZONES[z]}へ出す`, () => act({ t: 'move', u, seat: c.o, zone: z })]),
+    '-',
+    ['捨て山の一番上へ', () => act({ t: 'preorder', u, to: 'top' })],
+    ['捨て山の一番下へ', () => act({ t: 'preorder', u, to: 'bottom' })]
+  ]);
 }
 
 // 最初の手札の枚数：1回目の引き直しまでは6枚、その後は1枚ずつ減る（m＝引き直した回数）
@@ -815,7 +898,12 @@ root.addEventListener('click', e => {
   const ph = e.target.closest('[data-ph]');
   if (ph) { act({ t: 'phase', p: +ph.dataset.ph }); return; }
   const pile = e.target.closest('[data-pile]');
-  if (pile) { openPile(+pile.dataset.seat, pile.dataset.zone); return; }
+  if (pile) {
+    const seat = +pile.dataset.seat, z = pile.dataset.zone;
+    if (z === 'discard' && seat === mySeat() && isPlayer()) discardPileMenu(e.clientX, e.clientY);
+    else openPile(seat, z);
+    return;
+  }
   const deck = e.target.closest('[data-mydeck]');
   if (deck && B.priv) {
     menu(e.clientX, e.clientY, `本国（${B.priv.deck.length}枚）`, [
