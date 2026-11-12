@@ -31,6 +31,11 @@ const COINS = ['コイン', '+1/+1/+1コイン', '-1/-1/-1コイン', '+2/+2/+2�
 const COIN_ST = /^([+\-±]\d+)\/([+\-±]\d+)\/([+\-±]\d+)コイン$/;   // 戦闘力を変えるコイン（+1/+1/+1 など）
 const coinShort = n => { const m = COIN_ST.exec(n); return m ? m[1] : n.replace(/コイン$/, '').slice(0, 3) || '●'; };
 const BATTLE = ['space', 'earth'];
+// 一時修正（コマンドや能力で一時的に変わった分）：c.tm = { d:[格闘,射撃,耐久], s:※を付けるか, m:メモ, k:ターン終了で消さない }
+const fmtMod = d => d.map(v => (v >= 0 ? '+' : '') + v).join('/');
+const tmLabel = tm => (tm.d.some(v => v) ? fmtMod(tm.d) : '') + (tm.s || tm.m ? '※' : '');
+const tmTitle = tm => `一時修正${tm.d.some(v => v) ? ' ' + fmtMod(tm.d) : ''}${tm.m ? ' ※' + tm.m : tm.s ? ' ※' : ''}${tm.k ? '（ターン終了で消さない）' : '（ターン終了で消える）'}`;
+const UNIT_T = ['U', 'A'];   // 部隊戦闘力に数える種類（ユニット・ACE）
 
 // ---------------------------------------------------------------------
 //  通信
@@ -219,7 +224,7 @@ function apply(a, who) {
         return;
       }
       if (PILES.includes(a.zone)) {   // 捨て札置き場へは表向き・リロール状態で、セットしていたカードも一緒に
-        [card, ...subs].forEach(c => { c.r = false; c.f = false; c.v = false; c.s = []; delete c.cn; tz.push(c); });
+        [card, ...subs].forEach(c => { c.r = false; c.f = false; c.v = false; c.s = []; delete c.cn; delete c.tm; tz.push(c); });
         log(`${nm}が『${cname(card)}』${subs.length ? `（セット${subs.length}枚ごと）` : ''}を${zoneLabel(a.seat, a.zone)}へ`);
       } else {
         card.s = subs; tz.push(card);
@@ -269,6 +274,15 @@ function apply(a, who) {
       log(`${nm}が『${cname(f.c)}』の上の『${a.name}』${n}枚を外して${zoneLabel(f.seat, f.zone)}に置きました`);
       return;
     }
+    case 'tmod': {    // 一時修正を付ける・消す
+      const f = findCard(S, a.u); if (!f || f.c.coin) return;
+      const d = [0, 1, 2].map(i => Math.max(-99, Math.min(99, (a.d || [])[i] | 0)));
+      const m = String(a.m || '').trim().slice(0, 60), sx = !!a.s || !!m;
+      if (!d.some(v => v) && !sx) { if (f.c.tm) { delete f.c.tm; log(`${nm}が『${cname(f.c)}』の一時修正を消しました`); } return; }
+      f.c.tm = { d, s: sx, m, k: !!a.k };
+      log(`${nm}が『${cname(f.c)}』に${tmTitle(f.c.tm)}`);
+      return;
+    }
     case 'zorder': {  // 置き場の中で左右に動かす（戦闘エリアは左が先頭）
       const f = findCard(S, a.u); if (!f || f.parent) return;
       const j = f.i + (a.d < 0 ? -1 : 1); if (j < 0 || j >= f.arr.length) return;
@@ -280,6 +294,7 @@ function apply(a, who) {
     case 'transform': { const f = findCard(S, a.u); if (!f) return; const x = BY_ID.get(f.c.id); if (!x || !x.alt) return; f.c.v = !f.c.v; log(`${nm}が『${cname(f.c)}』を${f.c.v ? `変形（${x.alt.name || '変形形態'}）` : '元の形態に戻す'}`); return; }
     case 'flip': { const f = findCard(S, a.u); if (!f) return; f.c.f = !f.c.f; log(`${nm}が『${cname(f.c)}』を${f.c.f ? '裏' : '表'}向きに`); return; }
     case 'turn': {
+      clearTm(S);
       eachCard(seatObj, c => c.r = false);
       S.turn = (S.turn || 0) + 1; S.active = who.seat;
       log(`── 第${S.turn}ターン ${nm}のターン（全リロール${a.drew ? '・1枚ドロー' : ''}）──`, 'turn');
@@ -333,6 +348,7 @@ function apply(a, who) {
       return;
     case 'endTurn': {
       if (who.seat !== S.active) return '手番の人だけがターンを終えられます';
+      clearTm(S);
       const nx = (S.active + 1) % S.seats.length;
       S.active = nx; S.turn = (S.turn || 0) + 1; S.phase = 0;
       eachCard(S.seats[nx], c => c.r = false);
@@ -374,6 +390,12 @@ function apply(a, who) {
       log('── 新しいゲーム。デッキを選んで準備してください ──', 'turn');
       return;
   }
+}
+// ターン終了：一時修正を消す（「ターン終了で消さない」にした物とコインは残す）
+function clearTm(S) {
+  let n = 0;
+  S.seats.forEach(s => eachCard(s, c => { if (c.tm && !c.tm.k) { delete c.tm; n++; } }));
+  if (n) log(`ターン終了：一時修正を消しました（${n}枚）`, 'sys');
 }
 function eachCard(seatObj, fn) { Object.values(seatObj.z).forEach(arr => arr.forEach(c => { fn(c); (c.s || []).forEach(fn); })); }
 function canReach(seat) { return seat === mySeat() || B.conns.some(x => x.seat === seat); }
@@ -587,26 +609,47 @@ function coinMods(cs) {
   return out;
 }
 const coinBadges = c => { const e = Object.entries(c.cn || {}); return e.length ? `<div class="coins">${e.map(([k, n]) => `<span class="coin" title="${esc(k)} ${n}枚">${esc(coinShort(k))}${n > 1 ? `<b>×${n}</b>` : ''}</span>`).join('')}</div>` : ''; };
-// セットグループ（ユニットにキャラなどをセットした物）の戦闘力の合計（+1/+1/+1 コインも足す）。数字でない所（*）はそのまま
-function groupStats(g) {
+// カードの今の戦闘力：変形・セットしたカード・+1/+1/+1 コイン・一時修正を全部足した物。数字でない所（*）はそのまま
+function cardStats(g) {
   const base = g.id && BY_ID.get(g.id);
   const st = g.v && base && base.alt ? base.alt.stats : base && base.st;   // 変形中は変形後の数字
-  const mods = coinMods([g, ...(g.s || [])]);
-  if (!st || (!(g.s || []).length && !mods.length)) return null;
+  if (!st) return null;
   const tot = st.slice();
-  const add = arr => arr.forEach((v, i) => { if (/^[+\-±]?\d+$/.test(v) && /^-?\d+$/.test(tot[i])) tot[i] = String(+tot[i] + +String(v).replace('±', '')); });
+  const add = arr => arr.forEach((v, i) => { v = String(v); if (/^[+\-±]?\d+$/.test(v) && /^-?\d+$/.test(tot[i])) tot[i] = String(+tot[i] + +v.replace('±', '')); });
   for (const x of g.s || []) { const c = x.id && BY_ID.get(x.id); if (c && c.st) add(c.st); }
-  mods.forEach(add);
+  coinMods([g, ...(g.s || [])]).forEach(add);
+  [g, ...(g.s || [])].forEach(x => x.tm && add(x.tm.d));
   return tot;
 }
+const hasTm = g => [g, ...(g.s || [])].some(x => x.tm && x.tm.d.some(v => v));
+// セットグループ・コイン・一時修正で元の数字から変わっている時だけ合計を返す
+function groupStats(g) {
+  if (!(g.s || []).length && !coinMods([g]).length && !hasTm(g)) return null;
+  return cardStats(g);
+}
+// 部隊戦闘力：戦闘エリアの先頭のユニットの格闘力＋2番目からのユニットの射撃力の合計
+function forceOf(arr) {
+  const us = arr.filter(c => !c.coin && !c.f && c.id && UNIT_T.includes((BY_ID.get(c.id) || {}).t));
+  if (!us.length) return null;
+  const num = v => /^-?\d+$/.test(v) ? +v : null;
+  let total = 0, unk = false;
+  const parts = us.map((c, i) => {
+    const st = cardStats(c) || [], v = num(st[i ? 1 : 0]);
+    if (v == null) unk = true; else total += v;
+    return `${i ? '射撃' : '先頭 格闘'} ${st[i ? 1 : 0] ?? '?'}『${cname(c)}』`;
+  });
+  return { total, unk, lead: us[0].u, note: parts.join('\n＋ ') };
+}
 // 場のカード（ロール中は横向き、セットしたカードは下に名札で）
-function slot(c, src) {
+function slot(c, src, lead = false) {
   if (c.coin) return `<div class="slot ctok" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" data-coin="1" title="${esc(c.coin)} ${c.n}枚（カードに落とすと乗せます）"><div class="mc ctk"><span>${esc(c.coin.replace(/コイン$/, '') || 'コイン')}</span><b>×${c.n}</b></div></div>`;
   const known = c.id && BY_ID.get(c.id);
-  const subs = (c.s || []).map(x => `<div class="sub${x.r ? ' r' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(x.u)}" ${x.id ? `data-cid="${esc(x.id)}"` : ''}>${esc(x.f && !x.id ? '裏向き' : cname(x))}${Object.keys(x.cn || {}).length ? ` ●${Object.values(x.cn).reduce((a, b) => a + b, 0)}` : ''}</div>`).join('');
+  const subs = (c.s || []).map(x => `<div class="sub${x.r ? ' r' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(x.u)}" ${x.id ? `data-cid="${esc(x.id)}"` : ''}>${esc(x.f && !x.id ? '裏向き' : cname(x))}${Object.keys(x.cn || {}).length ? ` ●${Object.values(x.cn).reduce((a, b) => a + b, 0)}` : ''}${x.tm ? ` <span class="tms" title="${esc(tmTitle(x.tm))}">${esc(tmLabel(x.tm))}</span>` : ''}</div>`).join('');
   const tot = !c.f ? groupStats(c) : null;
   const v = c.v && !c.f && known && known.alt;
-  return `<div class="slot${c.r ? ' r' : ''}${v ? ' v' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" ${known ? `data-cid="${esc(c.id)}"` : ''}>${(c.f && known) ? miniFace({}).replace('GW', '裏') : miniFace(c)}${coinBadges(c)}${!subs && tot ? `<div class="gst ov" title="コイン込みの戦闘力">[${esc(tot.join(']['))}]</div>` : ''}${subs ? `<div class="subs">${tot ? `<div class="gst" title="セットグループの合計（コイン込み）">計[${esc(tot.join(']['))}]</div>` : ''}${subs}</div>` : ''}</div>`;
+  const tmc = hasTm(c) ? ' tm' : '';
+  const tmb = c.tm ? `<div class="tmb" title="${esc(tmTitle(c.tm))}">${esc(tmLabel(c.tm))}</div>` : '';
+  return `<div class="slot${c.r ? ' r' : ''}${v ? ' v' : ''}${lead ? ' lead1' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" ${known ? `data-cid="${esc(c.id)}"` : ''}>${lead ? '<span class="leadtag">先頭</span>' : ''}${(c.f && known) ? miniFace({}).replace('GW', '裏') : miniFace(c)}${coinBadges(c)}${tmb}${!subs && tot ? `<div class="gst ov${tmc}" title="コイン・一時修正込みの戦闘力">[${esc(tot.join(']['))}]</div>` : ''}${subs ? `<div class="subs">${tot ? `<div class="gst${tmc}" title="セットグループの合計（コイン・一時修正込み）">計[${esc(tot.join(']['))}]</div>` : ''}${subs}</div>` : ''}</div>`;
 }
 function zoneHtml(seat, z, cls = '') {
   const arr = VS.seats[seat].z[z];
@@ -615,9 +658,11 @@ function zoneHtml(seat, z, cls = '') {
     const face = !top ? '' : SECRET.includes(z) ? '<div class="slot"><div class="mc back">GW</div></div>' : slot(top, 'pub').replace('draggable="true"', 'draggable="false"');
     return `<div class="zone pile" data-seat="${seat}" data-zone="${z}" data-pile="1"><div class="zl">${ZONES[z]}</div><div class="zc">${face}</div><span class="num${arr.length ? '' : ' zero'}">${arr.length}</span></div>`;
   }
-  const lead = BATTLE.includes(z) ? '<span class="lead" title="戦闘エリアは左が先頭です（カードのメニューで前後を入れ替え）">先頭</span>' : '';
+  const bat = BATTLE.includes(z), fo = bat ? forceOf(arr) : null;
+  const lead = bat && !fo ? '<div class="leadbox" title="戦闘エリアは左が先頭です（カードのメニューで前後を入れ替え）"><span>先頭</span></div>' : '';
+  const force = fo ? `<b class="bforce${fo.unk ? ' unk' : ''}" title="部隊戦闘力＝先頭のユニットの格闘力＋2番目からのユニットの射撃力（コイン・一時修正込み）\n${esc(fo.note)}${fo.unk ? '\n数字でない所（*など）は0として数えています' : ''}">部隊戦闘力 ${fo.total}${fo.unk ? '＋？' : ''}</b>` : '';
   const add = isPlayer() && seat === mySeat() ? `<span class="zadd" data-coinzone="${z}" title="この置き場にコインを置きます（カードの上に乗せるのはカードのメニューか、コインをカードへドラッグ）">＋コイン</span>` : '';
-  return `<div class="zone ${cls}${lead ? ' bat' : ''}" data-seat="${seat}" data-zone="${z}"><div class="zl">${ZONES[z]}${arr.length ? `（${arr.length}）` : ''}${add}</div><div class="zc">${lead}${arr.map(c => slot(c, 'pub')).join('')}</div></div>`;
+  return `<div class="zone ${cls}${bat ? ' bat' : ''}" data-seat="${seat}" data-zone="${z}"><div class="zl">${force}${ZONES[z]}${arr.length ? `（${arr.length}）` : ''}${add}</div><div class="zc">${lead}${arr.map(c => slot(c, 'pub', !!fo && c.u === fo.lead)).join('')}</div></div>`;
 }
 function deckPile(seat) {
   const s = VS.seats[seat], mine = seat === B.seat && B.priv;
@@ -891,7 +936,8 @@ function showPrev(cid, u) {
     }
   }
   const c = BY_ID.get(cid); if (!c) return;
-  B.prev = { cid, u }; el.innerHTML = cardFace(c, { v: !!(f && f.c.v && !f.c.f) });
+  const tm = f && f.c.tm, st = f && !f.c.f && groupStats(f.c);
+  B.prev = { cid, u }; el.innerHTML = (tm || st ? `<div class="grp"><div class="gh">${tm ? `<b class="tmt">${esc(tmTitle(tm))}</b>　` : ''}${st ? `今の数字 <b>[${esc(st.join(']['))}]</b>` : ''}</div>` : '') + cardFace(c, { v: !!(f && f.c.v && !f.c.f) }) + (tm || st ? '</div>' : '');
 }
 root.addEventListener('mouseover', e => {
   const t = e.target.closest('[data-u],[data-cid]'); if (!t) return;
@@ -950,6 +996,8 @@ function pubMenu(u, x, y) {
   const coinItems = [['コインを乗せる…', () => coinPick(x, y, `『${cname(c)}』に乗せるコイン`, n => act({ t: 'coin', u, name: n, d: 1 }))]];
   for (const [k, n] of cn) coinItems.push([`${k}（${n}枚）を1枚足す`, () => act({ t: 'coin', u, name: k, d: 1 })], [`${k}を1枚取る`, () => act({ t: 'coin', u, name: k, d: -1 })], [`${k}を外して場に置く`, () => act({ t: 'coinOff', u, name: k })]);
   items.push('-', ...coinItems);
+  items.push('-', [`一時修正（+1/+0/-1・※）…${c.tm ? `　今：${tmLabel(c.tm)}` : ''}`, () => openTm(u)]);
+  if (c.tm) items.push(['一時修正を消す', () => act({ t: 'tmod', u })]);
   menu(x, y, cname(c) + (mine ? '' : `（${B.S.seats[owner].name}のカード）`), items);
 }
 function handMenu(u, x, y) {
@@ -976,6 +1024,38 @@ function deckCardMenu(u, x, y, after) {
     ['一番上へ', () => { B.priv.deck.unshift(takeFromDeck(u)); done(); }],
     ['一番下へ', () => { B.priv.deck.push(takeFromDeck(u)); done(); act({ t: 'note', msg: '本国の1枚を一番下にしました' }); }]
   ]);
+}
+
+// 一時修正の窓
+const tmDlg = document.createElement('dialog'); tmDlg.id = 'tmDlg'; document.body.appendChild(tmDlg);
+function openTm(u) {
+  const f = findCard(VS, u); if (!f) return;
+  const tm = f.c.tm || { d: [0, 0, 0], s: false, m: '', k: false }, d = tm.d.slice();
+  const LB = ['格闘', '射撃', '耐久'], PRE = [[1, 1, 1], [-1, -1, -1], [2, 2, 2], [-2, -2, -2], [1, 0, 0], [0, 1, 0], [0, 0, 1], [3, 0, 0]];
+  tmDlg.innerHTML = `<h3>一時修正：『${esc(cname(f.c))}』</h3>
+    <p class="note">コマンドや能力で一時的に変わった分を書いておく所です。カードと部隊戦闘力の数字に足します。ターン終了で自動で消えます（コインは消えません）。</p>
+    <div class="tmrow">${LB.map((l, i) => `<div class="tmst"><span>${l}</span><button data-a="${i}" data-v="-1">−</button><b id="tmv${i}"></b><button data-a="${i}" data-v="1">＋</button></div>`).join('')}</div>
+    <div class="tmpre"><span class="note">足す：</span>${PRE.map((p, i) => `<button class="mini" data-p="${i}">${fmtMod(p)}</button>`).join('')}<button class="mini ghost" data-p="z">0に戻す</button></div>
+    <div class="tmm"><label><input type="checkbox" id="tmS"> ※を付ける</label><input id="tmM" maxlength="60" placeholder="※のメモ（例：強襲を得る、この戦闘中は破壊されない）"></div>
+    <label class="note"><input type="checkbox" id="tmK"> ターン終了で消さない（長く続く効果の時）</label>
+    <div class="row"><span id="tmNow" class="note" style="margin-right:auto"></span>${f.c.tm ? '<button id="tmDel" class="ghost">消す</button>' : ''}<button id="tmNo" class="ghost">やめる</button><button id="tmOk" class="primary">決定</button></div>`;
+  const q = s => tmDlg.querySelector(s);
+  q('#tmS').checked = !!tm.s; q('#tmM').value = tm.m || ''; q('#tmK').checked = !!tm.k;
+  const show = () => {
+    d.forEach((v, i) => q('#tmv' + i).textContent = (v >= 0 ? '+' : '') + v);
+    const st = cardStats({ ...f.c, tm: { d } });
+    q('#tmNow').textContent = st ? `修正後 [${st.join('][')}]` : '';
+  };
+  q('#tmM').oninput = () => { if (q('#tmM').value.trim()) q('#tmS').checked = true; };
+  tmDlg.onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.a) { d[+b.dataset.a] += +b.dataset.v; show(); return; }
+    if (b.dataset.p) { if (b.dataset.p === 'z') d.fill(0); else PRE[+b.dataset.p].forEach((v, i) => d[i] += v); show(); return; }
+    if (b.id === 'tmNo') tmDlg.close();
+    if (b.id === 'tmDel') { tmDlg.close(); act({ t: 'tmod', u }); }
+    if (b.id === 'tmOk') { tmDlg.close(); act({ t: 'tmod', u, d, s: q('#tmS').checked, m: q('#tmM').value, k: q('#tmK').checked }); }
+  };
+  show(); tmDlg.showModal();
 }
 
 // 本国・捨て札置き場の一覧

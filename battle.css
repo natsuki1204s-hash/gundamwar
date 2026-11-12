@@ -153,10 +153,33 @@ body:has(#battle.on) #toast{bottom:auto;top:56px}
 .slot.pt::after{content:'指定';position:absolute;left:50%;bottom:-2px;transform:translateX(-50%);font-size:9.5px;font-weight:800;color:#fff;background:var(--danger);border-radius:3px;padding:0 4px;pointer-events:none;white-space:nowrap}
 .shnote{color:var(--accent);margin-left:8px;font-weight:700}
 .bhand .zl .mini{padding:0 6px;font-size:10.5px;margin-left:6px}
-/* 戦闘エリアの先頭（左端） */
-.zone.bat .lead{flex:none;writing-mode:vertical-rl;display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:800;letter-spacing:.2em;color:var(--accent);
-  background:#3a342466;border:1px dashed #6b5d38;border-radius:4px;padding:2px 1px;min-height:calc(var(--ch) - 4px);user-select:none}
-.zone.bat .lead::after{content:'▶';writing-mode:horizontal-tb;font-size:8px;margin-top:3px;letter-spacing:0}
+/* 戦闘エリアの先頭枠（左端）。ユニットがいれば先頭のユニットを枠で囲む */
+.zone.bat .leadbox{flex:none;width:var(--cw);height:var(--ch);border:2px dashed #8a7840;border-radius:6px;background:#3a342444;display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:11px;font-weight:800;letter-spacing:.15em;user-select:none}
+.zone.bat .leadbox span::after{content:' ▶';letter-spacing:0;font-size:9px}
+.slot.lead1>.mc{outline:2px solid var(--accent);outline-offset:1px;box-shadow:0 0 8px #e0b84a88}
+.slot.lead1.ok>.mc{outline-color:#7dff9b}
+.leadtag{position:absolute;left:2px;bottom:2px;z-index:3;background:var(--accent);color:#1b1a17;font-size:9px;font-weight:900;border-radius:3px;padding:0 4px;line-height:1.35;pointer-events:none;white-space:nowrap}
+.slot.r .leadtag{bottom:calc(50% - var(--cw) * .5 + 2px)}
+.zone.bat>.zl .bforce{pointer-events:auto;cursor:help;margin-right:8px;background:var(--accent);color:#1b1a17;border-radius:4px;padding:0 6px;font-size:12px;font-weight:900}
+.zone.bat>.zl .bforce.unk{background:#c9a04a}
+.zone.bat>.zl:has(.bforce){opacity:1}
+/* 一時修正 */
+.tmb{position:absolute;top:2px;right:2px;z-index:2;background:#0c3a4ae8;border:1px solid #4fd1ff;color:#bdf0ff;border-radius:3px;padding:0 3px;font-size:9px;font-weight:900;line-height:1.3;white-space:nowrap;cursor:help}
+.slot.r .tmb{top:calc(50% - var(--cw) * .5 + 2px)}
+.tms{color:#7fe0ff;font-weight:800}
+.gst.tm{color:#9fe8ff}
+.gst.ov.tm{background:#0c2a36e8;border-color:#4fd1ff;color:#bdf0ff}
+.bprev .grp .gh b.tmt{color:#7fe0ff}
+#tmDlg{max-width:520px}
+#tmDlg .tmrow{display:flex;gap:14px;justify-content:center;margin:8px 0}
+#tmDlg .tmst{display:flex;align-items:center;gap:4px}
+#tmDlg .tmst span{font-size:12px;color:var(--sub)}
+#tmDlg .tmst b{min-width:30px;text-align:center;font-size:18px;color:#9fe8ff}
+#tmDlg .tmst button{padding:2px 9px}
+#tmDlg .tmpre{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:6px 0}
+#tmDlg .tmpre .mini{padding:2px 7px;font-size:12px}
+#tmDlg .tmm{display:flex;gap:8px;align-items:center;margin:8px 0}
+#tmDlg .tmm input:not([type]){flex:1}
 /* 手札：今の国力で出せるカード */
 .slot.ok>.mc{box-shadow:0 0 0 2px #7dff9b,0 0 10px 2px #49e07acc;animation:okglow 1.6s ease-in-out infinite}
 @keyframes okglow{50%{box-shadow:0 0 0 2px #7dff9b,0 0 4px 0 #49e07a66}}

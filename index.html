@@ -145,7 +145,7 @@ dialog .row{justify-content:flex-end;margin-top:10px}
   nav.tabs button{padding:5px 8px}
 }
 </style>
-<link rel="stylesheet" href="battle.css?v=20261112b">
+<link rel="stylesheet" href="battle.css?v=20261112c">
 </head>
 <body>
 <header>
@@ -614,10 +614,11 @@ function openSheet(id) {
       <div class="qty"><button data-q="-1">−</button><b>${n}</b><button data-q="1">＋</button><span class="note">枚</span></div>
       <div class="row">
         <button id="imgSet">画像を設定</button>
+        <button id="imgPaste" title="コピーした画像を貼ります（この画面で Ctrl+V でも貼れます）">クリップボードから貼る</button>
         ${Images.hasLocal(c) ? '<button id="imgDel" class="ghost">画像を外す</button>' : ''}
         <button id="sheetClose" class="primary" style="margin-left:auto">閉じる</button>
       </div>
-      <div class="note">画像はこのブラウザにだけ保存され、同じ名前のカードに共通で使われます。</div>
+      <div class="note">画像はこのブラウザにだけ保存され、同じ名前のカードに共通で使われます。サイトの画像を右クリック→「画像をコピー」してから、この画面で Ctrl+V（または「クリップボードから貼る」）でも入れられます。</div>
     </div>`;
   $('sheet').classList.add('on');
 }
@@ -626,13 +627,32 @@ $('sheet').onclick = async e => {
   if (e.target.id === 'sheet' || e.target.id === 'sheetClose') { closeSheet(); return; }
   const q = e.target.closest('[data-q]'); if (q) { addCard(sheetId, +q.dataset.q); return; }
   if (e.target.id === 'imgSet') $('imgFile').click();
+  if (e.target.id === 'imgPaste') {
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.read) throw new Error('read なし');
+      for (const it of await navigator.clipboard.read()) {
+        const ty = it.types.find(t => t.startsWith('image/'));
+        if (ty) { await setImage(await it.getType(ty)); return; }
+      }
+      toast('クリップボードに画像がありません（画像を右クリック→「画像をコピー」してから）');
+    } catch (err) { toast('このブラウザでは読めませんでした。この画面で Ctrl+V を押して貼ってください'); }
+  }
   if (e.target.id === 'imgDel') { await Images.del(BY_ID.get(sheetId).n); renderAll(true); toast('画像を外しました'); }
 };
-$('imgFile').onchange = async e => {
-  const f = e.target.files[0]; e.target.value = ''; if (!f || !sheetId) return;
+async function setImage(f) {
+  if (!f || !sheetId) return;
   try { await Images.put(BY_ID.get(sheetId).n, await shrink(f)); renderAll(true); toast('画像を設定しました'); }
   catch (err) { toast('画像を保存できませんでした'); }
-};
+}
+$('imgFile').onchange = e => { const f = e.target.files[0]; e.target.value = ''; setImage(f); };
+// カードの詳細を開いている間の Ctrl+V：クリップボードの画像をそのカードの画像にする
+document.addEventListener('paste', e => {
+  if (!sheetId || !$('sheet').classList.contains('on')) return;
+  if (e.target.closest && e.target.closest('input,textarea')) return;
+  const it = [...(e.clipboardData?.items || [])].find(i => i.kind === 'file' && i.type.startsWith('image/'));
+  if (!it) { toast('クリップボードに画像がありません'); return; }
+  e.preventDefault(); setImage(it.getAsFile());
+});
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
 
 // =====================================================================
@@ -653,6 +673,6 @@ if (!CARDS.length) document.body.innerHTML = '<p style="padding:20px">cards.js �
 else { renderAll(); Images.init().then(() => renderAll()); }
 </script>
 <script src="lib/peerjs.min.js"></script>
-<script src="battle.js?v=20261112b"></script>
+<script src="battle.js?v=20261112c"></script>
 </body>
 </html>
