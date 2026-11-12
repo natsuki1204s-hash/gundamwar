@@ -123,7 +123,7 @@ def parse_card(c):
             if '@@PLAIN@@' in items[h][1] and p['text'] and not re.search(r'[:：。【《(（]', p['text'][0]):
                 p['traits'] = p['text'].pop(0).split()
             # 変形などの第2形態：形態名 → (テキスト) → 戦闘力
-            if len(stat_idx) > 1 and stat_idx[1] - s0 <= 8 and all(it[0] == 'text' for it in body[s0 + 1:stat_idx[1]]):
+            if len(stat_idx) > 1 and stat_idx[1] - s0 <= 8 and all(it[0] == 'text' and (EFFECT_START.match(it[1]) or it[1][:1] == '[' or (len(it[1]) <= 30 and '。' not in it[1])) for it in body[s0 + 1:stat_idx[1]]):
                 mid = [it[1] for it in body[s0 + 1:stat_idx[1]] if it[0] == 'text']
                 st2 = stats_of(body[stat_idx[1]])
                 p['alt'] = {'name': mid[0] if mid else '', 'text': mid[1:], 'tags': st2['tags'], 'stats': st2['stats']}

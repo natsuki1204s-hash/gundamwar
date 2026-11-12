@@ -77,6 +77,13 @@ main{height:calc(100% - 48px)}
 .card .traits{font-size:10.5px;background:#0006;border-radius:4px;padding:1px 5px}
 .card .text{flex:1;overflow:auto;background:#0008;border-radius:6px;padding:5px 6px;line-height:1.45}
 .card .text p{margin:0 0 3px}
+.card .vtop{background:#2a1f3df0;border:1px solid #c9a8ff;border-radius:6px;padding:3px 6px;font-size:11.5px;line-height:1.35}
+.card .vtop .sub{display:block;font-weight:800;background:none;max-width:none;white-space:normal;font-size:inherit;padding:0;cursor:auto;opacity:1}
+.card .vtop>b{color:#d9c2ff}
+.card .vtop p{margin:0}
+.card.v .foot,.card.v .text{opacity:.45}
+.card.img .vtop{position:absolute;left:6px;right:6px;top:6px}
+.card.sm .vtop{display:none}
 .card .text .alt{border-top:1px dashed #fff6;margin-top:4px;padding-top:3px}
 .card .text .alt .sub{font-weight:bold;opacity:.85;background:none;max-width:none;white-space:normal;font-size:inherit;padding:0;cursor:auto}
 .card .foot{display:flex;justify-content:space-between;align-items:center;font-size:11px}
@@ -353,14 +360,16 @@ function fmtText(t) {
 function cardFace(c, opt = {}) {
   const u = Images.url(c);
   const cls = 'card' + (opt.small ? ' sm' : '');
-  if (u) return `<div class="${cls} img" data-c="${c.c}"><img src="${esc(u)}" alt="${esc(c.n)}" loading="lazy"></div>`;
+  // opt.v＝変形中（本物はカードを180度回して使う）。変形後の形態を上に目立たせ、元の形態は薄く
+  const vtop = opt.v && c.alt ? `<div class="vtop"><b>変形中</b>　${altHtml(c)}</div>` : '';
+  if (u) return `<div class="${cls} img${vtop ? ' v' : ''}" data-c="${c.c}"><img src="${esc(u)}" alt="${esc(c.n)}" loading="lazy">${vtop}</div>`;
   const st = c.st ? `[${c.st.join('][')}]` : '';
-  return `<div class="${cls}" data-c="${c.c}" style="--cc:var(--c-${c.c})">
+  return `<div class="${cls}${vtop ? ' v' : ''}" data-c="${c.c}" style="--cc:var(--c-${c.c})">${vtop}
     <div class="top">${c.k && c.k[0] != null ? `<span class="cost">${esc(costStr(c))}</span>` : ''}<span class="tbadge">${esc(TYPE_NAME[c.t] || c.t)}</span></div>
     <div><div class="model">${esc(c.m || '')}</div><div class="name">${esc(c.n)}</div></div>
     <div class="art">${esc(c.c)}</div>
     ${c.tr ? `<div class="traits">${esc(c.tr.join(' '))}</div>` : ''}
-    <div class="text">${(c.x || []).map(t => `<p>${fmtText(t)}</p>`).join('') || '<p style="opacity:.6">（テキストなし）</p>'}${c.alt ? `<div class="alt">${altHtml(c)}</div>` : ''}</div>
+    <div class="text">${(c.x || []).map(t => `<p>${fmtText(t)}</p>`).join('') || '<p style="opacity:.6">（テキストなし）</p>'}${c.alt && !vtop ? `<div class="alt">${altHtml(c)}</div>` : ''}</div>
     <div class="foot"><span>${esc((c.tg || []).join(' '))}</span>${st ? `<span class="st">${esc(st)}</span>` : ''}</div>
   </div>`;
 }

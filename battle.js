@@ -197,12 +197,12 @@ function apply(a, who) {
       const card = f.c, subs = card.s || []; card.s = [];
       if (a.onto) {
         const t = findCard(S, a.onto); if (!t) { tz.push(card); return; }
-        t.c.s.push(card, ...subs);
+        card.v = false; t.c.s.push(card, ...subs);
         log(`${nm}が『${cname(card)}』を『${cname(t.c)}』にセット`);
         return;
       }
       if (PILES.includes(a.zone)) {   // 捨て札置き場へは表向き・リロール状態で、セットしていたカードも一緒に
-        [card, ...subs].forEach(c => { c.r = false; c.f = false; c.s = []; tz.push(c); });
+        [card, ...subs].forEach(c => { c.r = false; c.f = false; c.v = false; c.s = []; tz.push(c); });
         log(`${nm}が『${cname(card)}』${subs.length ? `（セット${subs.length}枚ごと）` : ''}を${zoneLabel(a.seat, a.zone)}へ`);
       } else {
         card.s = subs; tz.push(card);
@@ -222,6 +222,7 @@ function apply(a, who) {
       return;
     }
     case 'roll': { const f = findCard(S, a.u); if (!f) return; f.c.r = !f.c.r; log(`${nm}が『${cname(f.c)}』を${f.c.r ? 'ロール' : 'リロール'}`); return; }
+    case 'transform': { const f = findCard(S, a.u); if (!f) return; const x = BY_ID.get(f.c.id); if (!x || !x.alt) return; f.c.v = !f.c.v; log(`${nm}が『${cname(f.c)}』を${f.c.v ? `変形（${x.alt.name || '変形形態'}）` : '元の形態に戻す'}`); return; }
     case 'flip': { const f = findCard(S, a.u); if (!f) return; f.c.f = !f.c.f; log(`${nm}が『${cname(f.c)}』を${f.c.f ? '裏' : '表'}向きに`); return; }
     case 'turn': {
       eachCard(seatObj, c => c.r = false);
@@ -470,13 +471,15 @@ function miniFace(c) {
   return `<div class="mc" data-c="${x.c}" style="--cc:var(--c-${x.c})">
     ${x.k && x.k[0] != null ? `<span class="mcost">${esc(costStr(x))}</span>` : `<span class="mcost">${esc(TYPE_NAME[x.t] || x.t)}</span>`}
     <span class="mname">${esc(x.n)}</span>
-    ${x.st ? `<span class="mst">${esc(x.st.join('/'))}</span>` : ''}</div>`;
+    ${x.st ? `<span class="mst">${esc(x.st.join('/'))}</span>` : ''}
+    ${x.alt ? `<span class="malt">${esc(/^[（(【《\[]/.test((x.alt.text || [])[0] || '(') ? '' : x.alt.text[0])} ${esc((x.alt.stats || []).join('/'))}</span>` : ''}</div>`;
 }
 // セットグループ（ユニットにキャラなどをセットした物）の戦闘力の合計。数字でない所（*）はそのまま
 function groupStats(g) {
   const base = g.id && BY_ID.get(g.id);
-  if (!base || !base.st || !(g.s || []).length) return null;
-  const tot = base.st.slice();
+  const st = g.v && base && base.alt ? base.alt.stats : base && base.st;   // 変形中は変形後の数字
+  if (!st || !(g.s || []).length) return null;
+  const tot = st.slice();
   for (const x of g.s) {
     const c = x.id && BY_ID.get(x.id); if (!c || !c.st) continue;
     c.st.forEach((v, i) => { if (/^-?\d+$/.test(v) && /^-?\d+$/.test(tot[i])) tot[i] = String(+tot[i] + +v); });
@@ -488,7 +491,8 @@ function slot(c, src) {
   const known = c.id && BY_ID.get(c.id);
   const subs = (c.s || []).map(x => `<div class="sub${x.r ? ' r' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(x.u)}" ${x.id ? `data-cid="${esc(x.id)}"` : ''}>${esc(x.f && !x.id ? '裏向き' : cname(x))}</div>`).join('');
   const tot = subs && !c.f ? groupStats(c) : null;
-  return `<div class="slot${c.r ? ' r' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" ${known ? `data-cid="${esc(c.id)}"` : ''}>${(c.f && known) ? miniFace({}).replace('GW', '裏') : miniFace(c)}${subs ? `<div class="subs">${tot ? `<div class="gst" title="セットグループの合計">計[${esc(tot.join(']['))}]</div>` : ''}${subs}</div>` : ''}</div>`;
+  const v = c.v && !c.f && known && known.alt;
+  return `<div class="slot${c.r ? ' r' : ''}${v ? ' v' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" ${known ? `data-cid="${esc(c.id)}"` : ''}>${(c.f && known) ? miniFace({}).replace('GW', '裏') : miniFace(c)}${subs ? `<div class="subs">${tot ? `<div class="gst" title="セットグループの合計">計[${esc(tot.join(']['))}]</div>` : ''}${subs}</div>` : ''}</div>`;
 }
 function zoneHtml(seat, z, cls = '') {
   const arr = VS.seats[seat].z[z];
@@ -645,12 +649,12 @@ function showPrev(cid, u) {
     const list = [g, ...g.s].filter(x => x.id && BY_ID.has(x.id)), tot = g.f ? null : groupStats(g);
     if (list.length) {
       B.prev = { cid, u };
-      el.innerHTML = `<div class="grp"><div class="gh">セットグループ ${g.s.length + 1}枚${tot ? `　合計 <b>[${esc(tot.join(']['))}]</b>` : ''}</div>${list.map(x => cardFace(BY_ID.get(x.id))).join('')}</div>`;
+      el.innerHTML = `<div class="grp"><div class="gh">セットグループ ${g.s.length + 1}枚${tot ? `　合計 <b>[${esc(tot.join(']['))}]</b>` : ''}</div>${list.map(x => cardFace(BY_ID.get(x.id), { v: x === g && g.v && !g.f })).join('')}</div>`;
       return;
     }
   }
   const c = BY_ID.get(cid); if (!c) return;
-  B.prev = { cid }; el.innerHTML = cardFace(c);
+  B.prev = { cid, u }; el.innerHTML = cardFace(c, { v: !!(f && f.c.v && !f.c.f) });
 }
 root.addEventListener('mouseover', e => {
   const t = e.target.closest('[data-u],[data-cid]'); if (!t) return;
@@ -675,6 +679,7 @@ function pubMenu(u, x, y) {
   const c = f.c, owner = c.o, mine = owner === B.seat;
   const items = [
     [c.r ? 'リロール（縦に）' : 'ロール（横に）', () => act({ t: 'roll', u })],
+    ...((BY_ID.get(c.id) || {}).alt && !c.f ? [[c.v ? '元の形態に戻す' : `変形（${BY_ID.get(c.id).alt.name || '変形形態'}）`, () => act({ t: 'transform', u })]] : []),
     [c.f ? '表にする' : '裏にする', () => act({ t: 'flip', u })], '-',
     ...MOVE_TO.filter(z => !(z === f.zone && f.seat === owner && !f.parent)).map(z => [`${ZONES[z]}へ`, () => act({ t: 'move', u, seat: owner, zone: z })]),
     '-',
