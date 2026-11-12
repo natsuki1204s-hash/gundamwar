@@ -8,6 +8,10 @@ import json, re, sys
 def gen_power(text):
     for x in text:
         if not x.startswith('(自動A)'): continue
+        x2 = re.search(r'([白青緑黒赤茶紫])国力Xを発生する.*コインの個数\+1', x)  # タメG：コインなしで1。コインの分は数えない
+        if x2: return [x2.group(1), 1, '']
+        t = re.search(r'自軍ターン中、([白青緑黒赤茶紫])国力(\d)、敵軍ターン中', x)  # 流転する世界の陣営G（ネオ・ジオン など）
+        if t: return [t.group(1), int(t.group(2)), 'myTurn']
         m = re.search(r'([白青緑黒赤茶紫])\s*国力(\d)を発生する', x)
         if not m: continue
         cond = 'R' if 'リロール状態の場合' in x else 'myDeploy' if '配備フェイズ' in x else 'myTurn' if '自軍ターンの間' in x else ''
@@ -25,10 +29,21 @@ for p in d:  # 名前・コスト・テキスト・戦闘力が同じ収録違�
     g = groups[key]
     g['nos'].append(p['no'])
     g['sets'] += [s for s in p['sets'] if s and s not in g['sets']]
+# 前の cards.js の id は変えない（保存済みデッキが別カードを指さないように）。
+# 新しく読めるようになった収録（例：ガンダムエクシア U-00-1）が前からある SP-70 の前に来ても、前の id を使う
+old_ids = {}
+try:
+    t = open(dst, encoding='utf-8').read()
+    for oc in json.loads(t[t.index('['):t.rindex(']') + 1]):
+        for no in oc['no']:
+            old_ids.setdefault((no, oc['n']), []).append(oc['id'])
+except FileNotFoundError:
+    pass
 out, seen = [], set()
 for k in order:
     g = groups[k]; p = g['p']
-    cid = f"{p['no']}|{p['name']}"; n = 2
+    keep = [i for no in g['nos'] for i in old_ids.get((no, p['name']), []) if i not in seen]
+    cid = keep[0] if keep else f"{p['no']}|{p['name']}"; n = 2
     while cid in seen:
         cid = f"{p['no']}|{p['name']}#{n}"; n += 1
     seen.add(cid)

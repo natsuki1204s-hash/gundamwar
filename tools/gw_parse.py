@@ -5,7 +5,9 @@ TYPE_RE = re.compile(r'^(UNIT|CH[A-Z]{4,8}|CAHARACTER|CO[A-Z]{4,6}|OP[A-Z]{5,8}|
 FIX_TYPE = {'CHRACTER': 'CHARACTER', 'CAHARACTER': 'CHARACTER', 'CHARCTER': 'CHARACTER', 'COMMNAD': 'COMMAND', 'COMAND': 'COMMAND'}
 PREFIX_TYPE = {'EX': 'UNIT', 'U': 'UNIT', 'CH': 'CHARACTER', 'C': 'COMMAND', 'O': 'OPERATION', 'G': 'GENERATION', 'A': 'ACE'}
 # デュアルカード（2色の指定国力）は「黒2-赤1-4-0」のように2色目が挟まる → dual
-NO_RE = re.compile(r'^(?:[A-Z] )?([A-Z]{1,3}-[A-Z]?\d+[A-Z]?)\s+(白|青|緑|黒|赤|茶|紫|無)?(?:白|青|緑|黒|赤|茶|紫)?\s*(?:(?:白|青|緑|黒|赤|茶|紫)(?=\d))?(\d+|\*)?(?:-(白|青|緑|黒|赤|茶|紫)(\d+))?-?(\d+|\*)?-?(\d+|\*)?\s*(.*)$')
+# ダブルオーのセット（U-00-1 など、番号に -00- が入る）は「緑 紫1-緑2-3-1」（1色目がカードの色と違う）や
+# 「紫 2-2-4-1」（数字4つ。2つ目の色が書かれていない）がある。後者は2つ目を「無」として dual にしておく（意味はナツキに確認中）
+NO_RE = re.compile(r'^(?:[A-Z] )?([A-Z]{1,3}-(?:00-)?[A-Z]?\d+[A-Z]?)(?:\s+|$)(白|青|緑|黒|赤|茶|紫|無)?(?:白|青|緑|黒|赤|茶|紫)?\s*(?:(?:白|青|緑|黒|赤|茶|紫)(?=\d))?(\d+|\*)?(?:-(白|青|緑|黒|赤|茶|紫)(\d+))?-?(\d+|\*)?-?(\d+|\*)?\s*(.*)$')
 STATS_RE = re.compile(r'^(.*?)\s*\[([^\]]*)\]\[([^\]]*)\]\[([^\]]*)\]\s*$')
 EFFECT_START = re.compile(r'^[（(【《]')
 
@@ -64,11 +66,19 @@ def header_of(item):
         return None
     m = NO_RE.match(nl)
     rarity, color = m[8].strip(), m[2] or ''
+    cost, dual = [m[3], m[6], m[7]], [m[4], int(m[5])] if m[4] else None
+    m4 = re.match(r'^-(\d+|\*)\s*(.*)$', rarity)
+    if m4 and not dual:  # 「紫 2-2-4-1」
+        cost, dual, rarity = [m[3], m[7], m4[1]], ['無', int(m[6])], m4[2]
+    m1 = re.search(r'\s(白|青|緑|黒|赤|茶|紫)(\d+)-(白|青|緑|黒|赤|茶|紫)\d+-', nl)
+    if m1 and dual and color and m1[1] != color and m1[3] == color:
+        # 「緑 紫1-緑2-3-1」→ 緑2 と 紫1（カードの色の方を先に）
+        cost, dual = [str(dual[1]), cost[1], cost[2]], [m1[1], int(m1[2])]
     m2 = re.fullmatch(r'(\S+) (白|青|緑|黒|赤|茶|紫)', rarity)  # G の「G-5 C 紫」（レア度の後に色）
     if m2 and not color:
         rarity, color = m2[1], m2[2]
     return {'type_raw': t.upper(), 'no': m[1], 'color': color,
-            'cost': [m[3], m[6], m[7]], 'rarity': rarity, 'dual': [m[4], int(m[5])] if m[4] else None}
+            'cost': cost, 'rarity': rarity, 'dual': dual}
 
 
 def stats_of(item):
@@ -103,6 +113,9 @@ def parse_card(c):
                 model = first[: -len(title)].strip()
         body = items[h + 1:end]
         stat_idx = [i for i, it in enumerate(body) if stats_of(it)]
+        if n and printings and EFFECT_START.match(sets):
+            # 1ページに色違いが並ぶ物（激しき情念 QG-1〜6 など）：前の行は前のカードの効果文なので、収録は前と同じ
+            sets = ' / '.join(printings[-1]['sets'])
         p = dict(hd, name=title, model=model, sets=[s.strip() for s in sets.split('/')])
         t = hd['type_raw'].split('(')[0].strip()
         t = FIX_TYPE.get(t, t)

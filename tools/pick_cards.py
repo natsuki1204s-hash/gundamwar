@@ -6,15 +6,19 @@ Wiki には行かないので、判定を直したら何度でも数秒でやり
 import glob, json, re, subprocess, sys, tempfile
 
 # 判定ルール。漏れが見つかったらここを直して再実行する
-NO_LINE = re.compile(r'(^|\n)\s*(?:[A-Z] )?[A-Z]{1,3}-[A-Z]?\d+[A-Z]?\s+(白|青|緑|黒|赤|茶|紫|無)?\s*[\d*]')  # U-159 緑 1-1-1
-G_LINE = re.compile(r'(^|\n)\s*(?:[A-Z] )?G-[A-Z]{0,3}\d+[A-Z]?\s')  # 特殊G「G-5 C 紫」（国力の数字がない）
+# 種類の行（UNIT / COMMAND / Generation など）のすぐ次の行が番号（U-159 / G-5 / G-84 青 / G-2 だけ）ならカードのページ。
+# 番号だけで見るとデッキ紹介やセットのページ（カードの番号を並べている）まで拾ってしまう
+TYPE = re.compile(r'^\s*(UNIT|CH[A-Z]{4,8}|CAHARACTER|CO[A-Z]{4,6}|OP[A-Z]{5,8}|GENERATION|ACE|G)\s*(\([A-Z・]+\))?\s*$', re.I)
+NUM = re.compile(r'^\s*(?:[A-Z] )?[A-Z]{1,3}-(?:00-)?[A-Z]{0,3}\d+[A-Z]?(?:[\s　]|$)')
 
 
 def is_card(p):
-    if p.get('missing') or not str(p.get('id', '')).isdigit():
+    if p.get('missing') or not str(p.get('id', '')).isdigit() or 'テンプレート' in p.get('title', ''):
         return False
-    flat = p.get('raw', '').replace('@@PRE@@', '').replace('@@/PRE@@', '')
-    return bool(NO_LINE.search(flat) or G_LINE.search(flat))
+    lines = [l for l in p.get('raw', '').replace('@@PRE@@', '').replace('@@/PRE@@', '').split('\n') if l.strip()]
+    if sum(1 for l in lines if NUM.match(l)) > 30:  # カードの一覧のページ（プロモーションカードの SP など）
+        return False
+    return any(TYPE.match(lines[i]) and NUM.match(lines[i + 1]) for i in range(len(lines) - 1))
 
 
 args = [a for a in sys.argv[1:] if a != '--dry']
