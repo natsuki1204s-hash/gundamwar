@@ -6,7 +6,7 @@ FIX_TYPE = {'CHRACTER': 'CHARACTER', 'CAHARACTER': 'CHARACTER', 'CHARCTER': 'CHA
 PREFIX_TYPE = {'EX': 'UNIT', 'U': 'UNIT', 'CH': 'CHARACTER', 'C': 'COMMAND', 'O': 'OPERATION', 'G': 'GENERATION', 'A': 'ACE'}
 # デュアルカード（2色の指定国力）は「黒2-赤1-4-0」のように2色目が挟まる → dual
 # ダブルオーのセット（U-00-1 など、番号に -00- が入る）は「緑 紫1-緑2-3-1」（1色目がカードの色と違う）や
-# 「紫 2-2-4-1」（数字4つ。2つ目の色が書かれていない）がある。後者は2つ目を「無」として dual にしておく（意味はナツキに確認中）
+# 「紫 2-2-4-1」（数字4つ。2つ目の色が書かれていない）がある。ダブルオーの書き方で「紫2＋何色でもいい2」の意味（ナツキ確認済み）。2つ目を「任意」として dual にする
 NO_RE = re.compile(r'^(?:[A-Z] )?([A-Z]{1,3}-(?:00-)?[A-Z]?\d+[A-Z]?)(?:\s+|$)(白|青|緑|黒|赤|茶|紫|無)?(?:白|青|緑|黒|赤|茶|紫)?\s*(?:(?:白|青|緑|黒|赤|茶|紫)(?=\d))?(\d+|\*)?(?:-(白|青|緑|黒|赤|茶|紫)(\d+))?-?(\d+|\*)?-?(\d+|\*)?\s*(.*)$')
 STATS_RE = re.compile(r'^(.*?)\s*\[([^\]]*)\]\[([^\]]*)\]\[([^\]]*)\]\s*$')
 EFFECT_START = re.compile(r'^[（(【《]')
@@ -69,7 +69,7 @@ def header_of(item):
     cost, dual = [m[3], m[6], m[7]], [m[4], int(m[5])] if m[4] else None
     m4 = re.match(r'^-(\d+|\*)\s*(.*)$', rarity)
     if m4 and not dual:  # 「紫 2-2-4-1」
-        cost, dual, rarity = [m[3], m[7], m4[1]], ['無', int(m[6])], m4[2]
+        cost, dual, rarity = [m[3], m[7], m4[1]], ['任意', int(m[6])], m4[2]
     m1 = re.search(r'\s(白|青|緑|黒|赤|茶|紫)(\d+)-(白|青|緑|黒|赤|茶|紫)\d+-', nl)
     if m1 and dual and color and m1[1] != color and m1[3] == color:
         # 「緑 紫1-緑2-3-1」→ 緑2 と 紫1（カードの色の方を先に）

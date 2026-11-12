@@ -263,7 +263,7 @@ const kata = s => s.replace(/[ぁ-ゖ]/g, ch => String.fromCharCode(ch.charCodeA
 const norm = s => kata((s||'').normalize('NFKC').toLowerCase());
 const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const total = c => c.k && c.k[1] != null ? +c.k[1] : -1;
-// デュアルカード（2色の指定国力）は c.d = ['赤', 1]。「黒2赤1-4-0」と出す
+// デュアルカード（2色の指定国力）は c.d = ['赤', 1]。「黒2赤1-4-0」と出す。ダブルオーの「紫 2-2-4-1」は c.d = ['任意', 2] で「紫2任意2-4-1」（2つ目は何色でもいい）
 const costStr = c => c.k && c.k[0] != null ? (c.d ? `${c.c}${c.k[0]}${c.d[0]}${c.d[1]}-${c.k[1]}-${c.k[2]}` : c.k.join('-')) : '';
 const altHtml = c => c.alt ? `<div class="sub">${esc(c.alt.name || '別形態')}　${esc((c.alt.tags || []).join(' '))} [${esc((c.alt.stats || []).join(']['))}]</div>${(c.alt.text || []).map(t => `<p>${fmtText(t)}</p>`).join('')}` : '';
 const numKey = no => { const m = /^([A-Z]+)-([A-Z]?)(\d+)/.exec(no || ''); return m ? [m[1], m[2], +m[3]] : [no, '', 0]; };
