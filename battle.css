@@ -32,7 +32,31 @@
 .zone>.zl{font-size:10.5px;color:var(--sub);line-height:1.2;padding:0 2px 2px;white-space:nowrap}
 .zone>.zl{overflow:hidden;text-overflow:ellipsis}
 .zone>.zc{display:flex;gap:4px;flex-wrap:wrap;align-items:flex-start;flex:1;min-height:calc(var(--ch) + 2px);overflow:auto;align-content:flex-start}
-.zone.g{flex:0 1 200px}
+.zone.g{flex:0 1 auto;min-width:150px;max-width:46%}
+.zone.g>.zc{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden}
+/* G 置き場：国力の集計と、基本Gの色ごとの束 */
+.zone>.zl.gsum{display:flex;flex-wrap:nowrap;align-items:center;gap:3px;overflow:hidden;line-height:1.25}
+.gsum b{color:var(--text)}
+.gsum .gk{margin-right:2px}
+.gchip{flex:none;display:inline-flex;align-items:baseline;gap:2px;padding:0 5px;border-radius:9px;font-weight:800;font-size:11.5px;color:#fff;background:var(--cc);text-shadow:0 1px 1px #0008}
+.gchip[style*="白"]{color:#1b1b1f;text-shadow:none}
+.gchip small{font-weight:600;font-size:10px;opacity:.9}
+.gchip .rl{background:#0006;border-radius:6px;padding:0 3px;color:#ffd27a;text-shadow:none}
+.gchip.zero{opacity:.55}
+.gchip.unk{background:#3a3f4c;color:#cfd5e2}
+.gtog{margin-left:auto;cursor:pointer;color:#8fb8ff;font-size:10.5px;padding:0 2px}
+.gtog:hover{text-decoration:underline}
+.gb{flex:none;width:calc(var(--cw) * .72);height:calc(var(--ch) - 6px);border-radius:5px;position:relative;cursor:grab;user-select:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+  background:linear-gradient(160deg,var(--cc) 0%,#15171c 95%);border:1px solid #0009;color:#fff;text-shadow:0 1px 2px #000;
+  box-shadow:3px -3px 0 -1px #0008,3px -3px 0 0 var(--cc),6px -6px 0 -1px #0008,6px -6px 0 0 var(--cc);margin:6px 6px 0 0}
+.gb .gbc{font-size:clamp(13px,calc(var(--ch) * .17),22px);font-weight:900;line-height:1}
+.gb .gbn{font-size:clamp(13px,calc(var(--ch) * .17),22px);font-weight:900;line-height:1}
+.gb .gbr{font-size:10px;font-weight:700;background:#000b;color:#ffd27a;border-radius:4px;padding:0 3px;text-shadow:none}
+.gb[style*="白"]{color:#1b1b1f;text-shadow:none}
+.gb.allr{filter:brightness(.6)}
+.gb.gsl{width:calc(var(--cw) * .5);box-shadow:none;margin:6px 0 0;justify-content:flex-start;padding:3px 2px}
+.gb .gsn{font-size:9.5px;font-weight:700;line-height:1.15;writing-mode:vertical-rl;overflow:hidden;flex:1}
+.gb .gss{font-size:10px;font-weight:800}
 .zone.dep{flex:1 1 auto}
 .piles{display:flex;gap:4px;flex:none}
 .pile{width:calc(var(--cw) + 10px);min-width:62px;flex:none;cursor:pointer}

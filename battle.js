@@ -562,7 +562,77 @@ function deckPile(seat) {
 function rowHtml2(seat) {
   return `<div class="bhalf${VS.active === seat ? ' active' : ''}">
     <div class="piles">${deckPile(seat)}${zoneHtml(seat, 'discard')}${zoneHtml(seat, 'junk')}${zoneHtml(seat, 'removed')}</div>
-    ${zoneHtml(seat, 'G', 'g')}${zoneHtml(seat, 'deploy', 'dep')}</div>`;
+    ${gZoneHtml(seat)}${zoneHtml(seat, 'deploy', 'dep')}</div>`;
+}
+// ---------------------------------------------------------------------
+//  G 置き場：基本Gは色ごとの束（例「緑×4」）、特殊G・裏向き・セット付きは1枚ずつ。
+//  上に「今発生している国力」。カードの gp（[色, 数, 条件]、tools/build_cards_js.py が文面から読む）で数える
+// ---------------------------------------------------------------------
+const GCOL = ['白', '青', '緑', '黒', '赤', '茶', '紫'];
+const gOpen = new Set();       // 束を広げて見ている席（自分の画面だけ）
+function gPower(seat) {
+  const pow = {}, cnt = {}, roll = {}; let unk = 0;
+  for (const c of VS.seats[seat].z.G) {
+    const x = !c.f && c.id && BY_ID.get(c.id), gp = x && x.gp;
+    if (!gp) { unk++; continue; }
+    const [col, k, cond] = gp;
+    cnt[col] = (cnt[col] || 0) + 1;
+    if (c.r) roll[col] = (roll[col] || 0) + 1;
+    const off = (cond === 'R' && c.r) || (cond === 'myTurn' && VS.active !== seat)
+      || (cond === 'myDeploy' && !(VS.active === seat && VS.phase === 2));
+    if (!off) pow[col] = (pow[col] || 0) + k;
+  }
+  return { pow, cnt, roll, unk };
+}
+function gSummary(seat) {
+  const arr = VS.seats[seat].z.G, { pow, cnt, roll, unk } = gPower(seat);
+  const cols = GCOL.filter(c => cnt[c]);
+  const total = Object.values(pow).reduce((a, b) => a + b, 0);
+  const chips = cols.map(c => {
+    const p = pow[c] || 0, more = cnt[c] !== p ? `<small>/${cnt[c]}枚</small>` : '';
+    // 基本Gはロールしていても国力を出す。ロールの数は茶（Gをロールして使う効果が多い）だけ見出しに出す
+    const r = c === '茶' ? `<small class="rl">ロール${roll[c] || 0}</small>` : '';
+    return `<span class="gchip${p ? '' : ' zero'}" style="--cc:var(--c-${c})" title="${c}：国力${p}（${cnt[c]}枚${roll[c] ? `、ロール${roll[c]}` : ''}）">${c}${p}${more}${r}</span>`;
+  }).join('') + (unk ? `<span class="gchip unk" title="出す国力がデータで分からないG（裏向き・効果で決まる物など）。人が判断してください">？${unk}</span>` : '');
+  const tog = arr.length ? `<span class="gtog" data-gtog="${seat}">${gOpen.has(seat) ? '束ねる' : '広げる'}</span>` : '';
+  return `<div class="zl gsum" title="今発生している国力 ${total}">G<b>${arr.length ? arr.length + '枚' : ''}</b>${cols.length ? `<span class="gk">${cols.length}色</span>` : ''}${chips}${tog}</div>`;
+}
+function gZoneHtml(seat) {
+  const arr = VS.seats[seat].z.G;
+  let body;
+  if (gOpen.has(seat)) body = arr.map(c => slot(c, 'pub')).join('');
+  else {
+    const loose = [], bun = {};
+    for (const c of arr) {
+      const x = !c.f && !(c.s || []).length && c.id && BY_ID.get(c.id);
+      if (x && x.basic) (bun[x.c] = bun[x.c] || []).push(c); else loose.push(c);
+    }
+    body = GCOL.filter(col => bun[col]).map(col => {
+      const cs = bun[col], nr = cs.filter(c => c.r).length;
+      const rep = [...cs].reverse().find(c => !c.r) || cs[cs.length - 1];   // ダブルクリック・ドラッグはリロール中の1枚から
+      return `<div class="gb${nr === cs.length ? ' allr' : ''}" draggable="${isPlayer()}" data-src="pub" data-gb="${col}" data-seat="${seat}" data-u="${esc(rep.u)}" data-cid="BASIC|${col}" style="--cc:var(--c-${col})" title="基本G（${col}）${cs.length}枚。ダブルクリックで1枚ロール、押すとメニュー">
+        <span class="gbc">${col}</span><span class="gbn">×${cs.length}</span>${nr ? `<span class="gbr">ロール${nr}</span>` : ''}</div>`;
+    }).join('') + loose.map(gSlim).join('');
+  }
+  return `<div class="zone g" data-seat="${seat}" data-zone="G">${gSummary(seat)}<div class="zc">${body}</div></div>`;
+}
+// 束ねている時の特殊G・裏向きなど：細い札にする（ロールは横にせず暗くして「ロール」と書く）
+function gSlim(c) {
+  const x = !c.f && c.id && BY_ID.get(c.id), col = x ? (x.gp ? x.gp[0] : x.c) : null;
+  const subs = (c.s || []).length ? `<span class="gss">+${c.s.length}</span>` : '';
+  return `<div class="gb gsl${c.r ? ' allr' : ''}" draggable="${isPlayer()}" data-src="pub" data-u="${esc(c.u)}" ${x ? `data-cid="${esc(c.id)}"` : ''} style="--cc:${col ? `var(--c-${col})` : '#2b3550'}" title="${esc(x ? x.n : '裏向きのカード')}">
+    <span class="gsn">${esc(x ? x.n : '裏')}</span>${subs}${c.r ? '<span class="gbr">R</span>' : ''}</div>`;
+}
+function gbMenu(seat, col, x, y) {
+  const cs = VS.seats[seat].z.G.filter(c => !c.f && !(c.s || []).length && c.id === 'BASIC|' + col);
+  if (!cs.length) return;
+  const up = [...cs].reverse().find(c => !c.r), dn = cs.find(c => c.r);
+  menu(x, y, `基本G（${col}）×${cs.length}${seat === B.seat ? '' : `（${B.S.seats[seat].name}のG）`}`, [
+    ...up ? [['1枚ロール', () => act({ t: 'roll', u: up.u })]] : [],
+    ...dn ? [['1枚リロール', () => act({ t: 'roll', u: dn.u })]] : [], '-',
+    ['1枚を動かす…', () => pubMenu((up || cs[cs.length - 1]).u, x, y)],
+    ['束を広げる', () => { gOpen.add(seat); render(); }]
+  ]);
 }
 function seatStrip(seat, me) {
   const s = VS.seats[seat];
@@ -971,8 +1041,11 @@ root.addEventListener('click', e => {
     ]);
     return;
   }
+  const tog = e.target.closest('[data-gtog]');
+  if (tog) { const st = +tog.dataset.gtog; gOpen.has(st) ? gOpen.delete(st) : gOpen.add(st); render(); return; }
   if (!isPlayer()) return;
   const t = e.target.closest('[data-u]'); if (!t) return;
+  if (t.dataset.gb) { gbMenu(+t.dataset.seat, t.dataset.gb, e.clientX, e.clientY); return; }
   if (t.dataset.src === 'shown') {
     const seat = +t.dataset.seat; if (seat === mySeat()) return;
     const sh = VS.seats[seat].sh, on = sh && sh.pt === t.dataset.u;
@@ -999,7 +1072,7 @@ root.addEventListener('dragstart', e => {
 });
 root.addEventListener('dragend', () => { drag = null; root.querySelectorAll('.over,.drop').forEach(x => x.classList.remove('over', 'drop')); });
 function dropTarget(e) {
-  const card = e.target.closest('.zone:not([data-pile]):not([data-zone="hand"]) [data-src="pub"][data-u]');
+  const card = e.target.closest('.zone:not([data-pile]):not([data-zone="hand"]) [data-src="pub"][data-u]:not([data-gb])');
   if (card && drag && card.dataset.u !== drag.u) return { onto: card.dataset.u, el: card.querySelector('.mc') || card };
   const z = e.target.closest('.zone[data-zone]');
   return z ? { seat: +z.dataset.seat, zone: z.dataset.zone, el: z } : null;

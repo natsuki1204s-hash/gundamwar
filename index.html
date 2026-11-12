@@ -250,7 +250,7 @@ dialog .row{justify-content:flex-end;margin-top:10px}
 const CARDS = window.GW_CARDS || [];
 // 基本G（Wikiにページがないのでここで用意する。何枚でも入れられる）
 if (CARDS.length) ['白','青','緑','黒','赤','茶','紫'].reverse().forEach(c => CARDS.unshift({
-  id: 'BASIC|' + c, n: `基本G（${c}）`, t: 'G', c, k: [null, null, null], r: '', basic: true,
+  id: 'BASIC|' + c, n: `基本G（${c}）`, t: 'G', c, k: [null, null, null], r: '', basic: true, gp: [c, 1, ''],
   x: [`(自動A):このカードは、${c}国力1を発生する。`], no: ['基本G'], s: ['基本G']
 }));
 const BY_ID = new Map(CARDS.map(c => [c.id, c]));
