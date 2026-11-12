@@ -240,6 +240,28 @@ function apply(a, who) {
       log(`${nm}が${S.reveal.what}を公開：${ids.map(id => `『${BY_ID.get(id).n}』`).join('') || '（なし）'}`);
       return;
     }
+    // ── 手札の公開（公開したまま）。見せているカードの中身は本人が送ってくる。seat.sh = { c:[{u,id}], pt:指定されたu }
+    case 'show': {
+      const old = seatObj.sh || { c: [] }, had = new Set(old.c.map(x => x.u));
+      const cards = (a.cards || []).filter(x => x && BY_ID.has(x.id)).slice(0, 60).map(x => ({ u: String(x.u), id: x.id }));
+      if (!cards.length) {
+        seatObj.sh = null;
+        if (old.c.length) log(`${nm}が手札の公開を終えました`);
+        return;
+      }
+      const added = cards.filter(x => !had.has(x.u));
+      seatObj.sh = { c: cards, pt: cards.some(x => x.u === old.pt) ? old.pt : null };
+      if (added.length) log(`${nm}が手札${a.all ? 'を全部' : 'の' + added.length + '枚を'}公開しています：${added.map(x => `『${BY_ID.get(x.id).n}』`).join('')}（公開中${cards.length}枚／手札${seatObj.hn}枚）`);
+      return;
+    }
+    case 'point': {   // 公開されている相手の手札の1枚を指定する（ハンデスなど）
+      const tg = S.seats[a.seat], sh = tg && tg.sh; if (!sh) return;
+      const x = sh.c.find(x => x.u === a.u);
+      if (!x || sh.pt === a.u) { sh.pt = null; log(`${nm}が手札の指定を外しました`); return; }
+      sh.pt = a.u;
+      log(`${nm}が${tg.name || '相手'}の手札の『${BY_ID.get(x.id).n}』を指定しました`);
+      return;
+    }
     // ── ターンとフェイズ
     case 'first': {
       const s = a.random ? Math.floor(Math.random() * S.seats.length) : who.seat;
@@ -293,7 +315,7 @@ function apply(a, who) {
     case 'newGame':
       if (who.seat !== 0) return '新しいゲームは部屋を作った人だけが始められます';
       S.game++; S.turn = 0; S.active = null; S.phase = null; S.first = null; S.reveal = null;
-      S.seats.forEach(s => { s.z = emptyZones(); s.ready = false; s.dn = 0; s.hn = 0; s.deckName = ''; s.su = null; s.mull = 0; s.pk = null; });
+      S.seats.forEach(s => { s.z = emptyZones(); s.ready = false; s.dn = 0; s.hn = 0; s.deckName = ''; s.su = null; s.mull = 0; s.pk = null; s.sh = null; });
       log('── 新しいゲーム。デッキを選んで準備してください ──', 'turn');
       return;
   }
@@ -555,6 +577,29 @@ function phaseBar(S, me) {
   return `<div class="bphase${mine ? ' mine' : ''}"><b>第${S.turn}ターン</b><span class="who">${mine ? 'あなた' : esc(S.seats[S.active].name || `席${S.active + 1}`)}のターン</span>
     ${PHASES.map((p, i) => `<span class="ph${i === S.phase ? ' on' : ''}${i < S.phase ? ' done' : ''}" ${mine ? `data-ph="${i}" title="押すとこのフェイズにします"` : ''}>${p}</span>`).join('<span class="ar">›</span>')}</div>`;
 }
+// 公開中の手札を管理役へ知らせる（手札が変わって公開中のカードが出ていったら、その分も）
+function syncShow() {
+  if (!B.priv || !isPlayer() || !online()) return;
+  const hand = B.priv.hand, keep = new Set(hand.map(c => c.u));
+  const sh = (B.priv.show || []).filter(u => keep.has(u));
+  if (sh.length !== (B.priv.show || []).length) { B.priv.show = sh; savePriv(); }
+  const cards = hand.filter(c => sh.includes(c.u)).map(c => ({ u: c.u, id: c.id }));
+  const sig = JSON.stringify(cards), cur = JSON.stringify(((B.S.seats[mySeat()] || {}).sh || { c: [] }).c);
+  if (sig === cur) { B.shSent = sig; return; }
+  if (B.shSent === sig) return;   // 送った物が戻ってくるのを待っている
+  B.shSent = sig;
+  act({ t: 'show', cards, all: !!B.showAll });
+  B.showAll = false;
+}
+function setShow(us, all) { B.priv.show = us; B.showAll = all; savePriv(); syncShow(); render(); }
+// 相手（観戦なら両者）の公開中の手札
+function shownRow(seat) {
+  const s = VS.seats[seat], sh = s.sh; if (!sh || !sh.c.length) return '';
+  const rest = Math.max(0, s.hn - sh.c.length);
+  const canPt = isPlayer() && seat !== mySeat();
+  return `<div class="bshown"><div class="zl"><b>${esc(s.name || `席${seat + 1}`)}</b>の手札を公開中<br>${sh.c.length}枚${rest ? `（ほかに裏${rest}枚）` : '（全部）'}${canPt ? '<br><span style="color:var(--sub)">押すと指定（ハンデスなど）</span>' : ''}</div>
+    <div class="zc">${sh.c.map(c => slot({ u: c.u, id: c.id }, 'shown').replace(/draggable="(true|false)"/, 'draggable="false"').replace('class="slot', `data-seat="${seat}" class="slot${sh.pt === c.u ? ' pt' : ''}`)).join('')}${rest ? `<div class="slot"><div class="mc back">×${rest}</div></div>` : ''}</div></div>`;
+}
 function render() {
   if (!B.S) { renderLobby(); return; }
   VS = B.role === 'host' ? viewFor(0) : B.S;
@@ -563,6 +608,8 @@ function render() {
   const chatVal = $('bChatIn')?.value || '', chatFocus = document.activeElement?.id === 'bChatIn';
   const nVal = $('bN')?.value || '1';
   const roleTxt = B.role === 'host' ? '対戦者（部屋の管理役）' : B.role === 'player' ? '対戦者' : '観戦者';
+  const mySh = new Set(B.priv && B.priv.show || []), myPt = (S.seats[me].sh || {}).pt;
+  const showing = B.priv && mySh.size && S.seats[me].su;
   let ctl = '';
   if (isPlayer()) {
     if (!B.priv) {
@@ -584,25 +631,26 @@ function render() {
         <button id="bDraw">引く</button><button id="bMill" title="戦闘ダメージ・資源など">本国→捨て山</button><button id="bLook" title="サーチ：上から見て選び、残りを上か下へ好きな順で戻す">上から見る</button>
         ${B.priv.look?.length ? `<button id="bLookOpen" class="primary">見ているカード（${B.priv.look.length}）</button>` : ''}
         <span class="sep"></span>
-        <button id="bShuffle">本国を切る</button><button id="bSearch">本国を全部見る</button><button id="bReroll">全リロール</button><button id="bReveal">手札を公開</button>`;
+        <button id="bShuffle">本国を切る</button><button id="bSearch">本国を全部見る</button><button id="bReroll">全リロール</button>${showing ? '<button id="bShowOff2">手札の公開を終える</button>' : '<button id="bShowAll" title="公開を終えるまで、相手と観戦に手札が見えます（あとで引いたカードは見せません）">手札を公開</button>'}`;
     }
     if (B.role === 'host') ctl += `<button id="bRec" class="ghost" style="margin-left:auto" title="操作の記録をファイルに保存（将来の再生用）">記録を保存</button><button id="bNew" class="ghost">新しいゲーム</button>`;
   } else ctl = `<span class="note">観戦中です。カードに乗せると右に大きく出ます。</span>`;
 
-  const myHand = B.priv ? B.priv.hand.map(c => slot(c, 'hand')).join('') : '';
+  const myHand = B.priv ? B.priv.hand.map(c => { const h = slot(c, 'hand'); return mySh.has(c.u) ? h.replace('class="slot', `class="slot shown${myPt === c.u ? ' pt' : ''}`) : h; }).join('') : '';
   root.innerHTML = `
   <div class="bboard">
     ${phaseBar(S, me)}
     ${B.lost ? `<div class="bbanner">部屋の管理役との接続が切れました。<button id="bRejoin">入り直す</button></div>` : ''}
     ${seatStrip(op, false)}
+    ${shownRow(op)}
     ${rowHtml2(op)}
     <div class="bmid">
       <div class="bfield">${zoneHtml(op, 'space')}${zoneHtml(me, 'space')}</div>
       <div class="bfield">${zoneHtml(op, 'earth')}${zoneHtml(me, 'earth')}</div>
     </div>
     ${rowHtml2(me)}
-    ${B.role === 'spect' ? seatStrip(me, true) : ''}
-    ${B.role !== 'spect' ? `<div class="bhand"><div class="zone" data-seat="${me}" data-zone="hand"><div class="zl"><b>${esc(S.seats[me].name)}</b>${S.active === me ? ' <span style="color:var(--accent)">● あなたのターン</span>' : ''}　手札（${B.priv ? B.priv.hand.length : 0}）※自分にだけ見えます</div><div class="zc">${myHand}</div></div></div>` : ''}
+    ${B.role === 'spect' ? seatStrip(me, true) + shownRow(me) : ''}
+    ${B.role !== 'spect' ? `<div class="bhand"><div class="zone" data-seat="${me}" data-zone="hand"><div class="zl"><b>${esc(S.seats[me].name)}</b>${S.active === me ? ' <span style="color:var(--accent)">● あなたのターン</span>' : ''}　手札（${B.priv ? B.priv.hand.length : 0}）${showing ? `<span class="shnote">● ${mySh.size}枚を公開中</span><button id="bShowOff" class="mini">公開を終える</button>` : '※自分にだけ見えます'}</div><div class="zc">${myHand}</div></div></div>` : ''}
     <div class="bctl">${ctl}</div>
   </div>
   <div class="bside">
@@ -620,6 +668,7 @@ function render() {
   wire();
   if (dlg.open && B.pileView) { const pl = dlg.querySelector('.plist'), sc = pl && pl.scrollTop; openPile(B.pileView.seat, B.pileView.z); const p2 = dlg.querySelector('.plist'); if (p2) p2.scrollTop = sc || 0; }
   checkReveal(S);
+  syncShow();
 }
 
 // ---------------------------------------------------------------------
@@ -637,6 +686,9 @@ function wire() {
   });
   on('bKeep', () => act({ t: 'keep', n: B.priv.hand.length }));
   on('bReveal', () => act({ t: 'reveal', ids: B.priv.hand.map(c => c.id), what: '手札' }));
+  on('bShowAll', () => { if (!B.priv.hand.length) return toast('手札がありません'); setShow(B.priv.hand.map(c => c.u), true); });
+  on('bShowOff', () => setShow([], false));
+  on('bShowOff2', () => setShow([], false));
   on('bFirst', () => act({ t: 'first' }));
   on('bFirstR', () => act({ t: 'first', random: true }));
   on('bNext', () => nextPhase());
@@ -726,7 +778,11 @@ function handMenu(u, x, y) {
   menu(x, y, cname(c), [
     ...['deploy', 'G', 'space', 'earth'].map(z => [`${ZONES[z]}へ出す`, () => playFromHand(u, z)]),
     ['裏向きで配備エリアへ', () => playFromHand(u, 'deploy', { f: true })],
-    ['このカードを公開する', () => act({ t: 'reveal', ids: [c.id], what: '手札のカード' })], '-',
+    ...(B.priv.show || []).includes(u)
+      ? [['このカードの公開をやめる', () => setShow(B.priv.show.filter(x => x !== u), false)]]
+      : [['このカードを公開する（公開したまま）', () => setShow([...(B.priv.show || []), u], false)],
+         ['このカードを1度だけ見せる', () => act({ t: 'reveal', ids: [c.id], what: '手札のカード' })]],
+    ...(B.priv.show || []).length ? [['手札の公開を全部終える', () => setShow([], false)]] : [], '-',
     ...['discard', 'junk', 'removed'].map(z => [`${ZONES[z]}へ`, () => playFromHand(u, z)]), '-',
     ['本国の上に戻す', () => { B.priv.deck.unshift(takeFromHand(u)); savePriv(); render(); act({ t: 'note', msg: '手札を1枚本国の上に戻しました' }); }],
     ['本国の下に戻す', () => { B.priv.deck.push(takeFromHand(u)); savePriv(); render(); act({ t: 'note', msg: '手札を1枚本国の下に戻しました' }); }]
@@ -917,6 +973,14 @@ root.addEventListener('click', e => {
   }
   if (!isPlayer()) return;
   const t = e.target.closest('[data-u]'); if (!t) return;
+  if (t.dataset.src === 'shown') {
+    const seat = +t.dataset.seat; if (seat === mySeat()) return;
+    const sh = VS.seats[seat].sh, on = sh && sh.pt === t.dataset.u;
+    menu(e.clientX, e.clientY, cname({ id: t.dataset.cid }) + `（${VS.seats[seat].name}の手札）`, [
+      [on ? '指定を外す' : 'このカードを指定する（ハンデスなど）', () => act({ t: 'point', seat, u: t.dataset.u })]
+    ]);
+    return;
+  }
   if (t.dataset.src === 'hand') handMenu(t.dataset.u, e.clientX, e.clientY);
   else if (t.dataset.src === 'pub') pubMenu(t.dataset.u, e.clientX, e.clientY);
 });
