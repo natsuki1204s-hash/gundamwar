@@ -844,8 +844,8 @@ function render() {
     ${shownRow(op)}
     ${rowHtml2(op)}
     <div class="bmid">
-      <div class="bfield">${zoneHtml(op, 'space')}${zoneHtml(me, 'space')}</div>
-      <div class="bfield">${zoneHtml(op, 'earth')}${zoneHtml(me, 'earth')}</div>
+      <div class="bfield bg-space">${zoneHtml(op, 'space')}${zoneHtml(me, 'space')}</div>
+      <div class="bfield bg-earth">${zoneHtml(op, 'earth')}${zoneHtml(me, 'earth')}</div>
     </div>
     ${rowHtml2(me)}
     ${B.role === 'spect' ? seatStrip(me, true) + shownRow(me) : ''}
