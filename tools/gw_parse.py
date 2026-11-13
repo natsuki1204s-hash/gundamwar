@@ -10,6 +10,9 @@ PREFIX_TYPE = {'EX': 'UNIT', 'U': 'UNIT', 'CH': 'CHARACTER', 'C': 'COMMAND', 'O'
 NO_RE = re.compile(r'^(?:[A-Z] )?([A-Z]{1,3}-(?:00-)?[A-Z]?\d+[A-Z]?)(?:\s+|$)(白|青|緑|黒|赤|茶|紫|無)?(?:白|青|緑|黒|赤|茶|紫)?\s*(?:(?:白|青|緑|黒|赤|茶|紫)(?=\d))?(\d+|\*)?(?:-(白|青|緑|黒|赤|茶|紫)(\d+))?-?(\d+|\*)?-?(\d+|\*)?\s*(.*)$')
 STATS_RE = re.compile(r'^(.*?)\s*\[([^\]]*)\]\[([^\]]*)\]\[([^\]]*)\]\s*$')
 EFFECT_START = re.compile(r'^[（(【《]')
+# 「以下から1つ選択する」の後の選択肢（1) 2) / 1、 / ①）と、「以下のテキストを得る」の後の「…」
+OPTION_START = re.compile(r'^(\d{1,2}[)）、]|[①-⑳]|「)')
+KEYWORD_LINE = re.compile(r'^[ァ-ヴー・]+\((\d+|X)\)$')  # プリベント(3) ヴァリアブル(1) など
 
 
 def norm(s):
@@ -141,12 +144,15 @@ def parse_card(c):
                 st2 = stats_of(body[stat_idx[1]])
                 p['alt'] = {'name': mid[0] if mid else '', 'text': mid[1:], 'tags': st2['tags'], 'stats': st2['stats']}
         else:
-            txt = []
+            txt, listing = [], False
             for it in body:
                 if it[0] != 'text':
                     break
-                if EFFECT_START.match(it[1]) or (not txt and len(it[1]) <= 20 and '。' not in it[1]):
-                    txt.append(it[1])
+                v = it[1]
+                if EFFECT_START.match(v) or KEYWORD_LINE.match(v) or (listing and OPTION_START.match(v)) or (not txt and len(v) <= 20 and '。' not in v):
+                    txt.append(v)
+                    if '以下' in v:
+                        listing = True
                 else:
                     break
             p['text'] = txt
