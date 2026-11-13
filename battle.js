@@ -373,6 +373,19 @@ function apply(a, who) {
       log(`${nm}が捨て山の上から${n}枚を手札に加えました`);
       return;
     }
+    case 'precover': {   // 捨て山の上からN枚を本国へ。heal＝回復（上へ1枚ずつ、裏向きのまま）。to：'top'|'bottom'
+      const arr = seatObj.z.discard, want = Math.max(1, a.n | 0), n = Math.min(want, arr.length);
+      if (n < 1) return '捨て山がありません';
+      const got = arr.slice(-n).reverse();   // got[0] が捨て山の一番上
+      for (const o of new Set(got.map(c => c.o))) if (!canReach(o)) return `${S.seats[o].name || '持ち主'}がいないので動かせません`;
+      arr.splice(arr.length - n, n);
+      if (seatObj.pk && seatObj.pk !== 'all') seatObj.pk = seatObj.pk.filter(u => !got.some(c => c.u === u));
+      const to = a.to === 'bottom' ? 'bottom' : 'top';
+      got.forEach(c => sendGain(c.o, { u: c.u, id: c.id }, to));
+      const short = n < want ? `（捨て山が${n}枚しかなかったので${n}枚）` : '';
+      log(a.heal ? `${nm}が本国を${n}回復しました${short}` : `${nm}が捨て山の上から${n}枚を本国の${to === 'top' ? '上' : '下'}へ戻しました${short}`);
+      return;
+    }
     case 'preorder': {   // 置き場の中の並べ替え（d：上へ+1／下へ-1、to：'top'|'bottom'）
       const f = findCard(S, a.u); if (!f || f.parent || !PILES.includes(f.zone)) return;
       const [c] = f.arr.splice(f.i, 1), L = f.arr.length;
@@ -823,7 +836,7 @@ function render() {
           : '<span class="note">相手のターンです</span>') + `
         <span class="sep"></span>
         <input type="number" id="bN" min="1" max="50" value="${esc(nVal)}" title="枚数"><span>枚を</span>
-        <button id="bDraw">引く</button><button id="bMill" title="戦闘ダメージ・資源など">本国→捨て山</button><button id="bLook" title="サーチ：上から見て選び、残りを上か下へ好きな順で戻す">上から見る</button>
+        <button id="bDraw">引く</button><button id="bMill" title="戦闘ダメージ・資源など">本国→捨て山</button><button id="bHeal" title="回復：捨て山の上から枚数ぶんを、裏向きのまま1枚ずつ本国の上へ">回復</button><button id="bLook" title="サーチ：上から見て選び、残りを上か下へ好きな順で戻す">上から見る</button>
         ${B.priv.look?.length ? `<button id="bLookOpen" class="primary">見ているカード（${B.priv.look.length}）</button>` : ''}
         <span class="sep"></span>
         <button id="bShuffle">本国を切る</button><button id="bSearch">本国を全部見る</button><button id="bReroll">全リロール</button>${showing ? '<button id="bShowOff2">手札の公開を終える</button>' : '<button id="bShowAll" title="公開を終えるまで、相手と観戦に手札が見えます（あとで引いたカードは見せません）">手札を公開</button>'}`;
@@ -899,6 +912,11 @@ function wire() {
     if (!online()) return toast('つながっていません');
     const got = B.priv.deck.splice(0, N()); savePriv();
     if (got.length) act({ t: 'enter', cards: got, zone: 'discard', src: 'deck' });
+  });
+  on('bHeal', () => {
+    if (!online()) return toast('つながっていません');
+    if (!VS.seats[mySeat()].z.discard.length) return toast('捨て山がありません');
+    act({ t: 'precover', n: N(), heal: true });
   });
   on('bLook', () => {
     const got = B.priv.deck.splice(0, N()); if (!got.length) return toast('本国がありません');
@@ -1113,6 +1131,10 @@ function discardPileMenu(x, y) {
   menu(x, y, `捨て山（${arr.length}枚）`, [
     ['上の1枚を手札へ（ドロー）', () => act({ t: 'pdraw', n: 1 })],
     ...(n > 1 ? [[`上から${n}枚を手札へ`, () => act({ t: 'pdraw', n })]] : []),
+    '-',
+    [`${n}回復（上から${n}枚を本国の上へ）`, () => act({ t: 'precover', n, heal: true })],
+    [`上から${n}枚を本国の上へ戻す`, () => act({ t: 'precover', n, to: 'top' })],
+    [`上から${n}枚を本国の下へ戻す`, () => act({ t: 'precover', n, to: 'bottom' })],
     '-',
     ['上の1枚を見る', () => look(1)],
     ...(n > 1 ? [[`上から${n}枚を見る`, () => look(n)]] : []),
