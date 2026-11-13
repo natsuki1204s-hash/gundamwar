@@ -242,6 +242,7 @@ dialog .row{justify-content:flex-end;margin-top:10px}
 <input type="file" id="imgFile" accept="image/*" hidden>
 
 <script src="cards.js"></script>
+<script src="shared.js?v=20261113b"></script>
 <script>
 'use strict';
 // =====================================================================
@@ -291,62 +292,138 @@ const cur = () => decks.find(d => d.id === curId);
 function saveDecks() { cur().updated = Date.now(); store.set('decks', decks); store.set('cur', curId); }
 
 // =====================================================================
-//  画像（将来用の受け口）
-//  優先順位：① このブラウザで設定した画像（IndexedDB）
-//            ② サイトの images/ フォルダ（images/index.json に載っているもの）
-//            ③ なければカード風の枠
+//  画像
+//  優先順位：① このブラウザで設定した画像（IndexedDB の img）
+//            ② みんなの画像（shared.js の Firebase に誰かが入れた物。IndexedDB の shared に写しを持つ）
+//            ③ サイトの images/ フォルダ（images/index.json に載っているもの）
+//            ④ なければカード風の枠
+//  みんなの画像は Firestore の images コレクションに1カード名1文書 {k: カード名, d: JPEG の base64, t: 入れた時刻ms}。
+//  消す時は d を '' にして残す（他の人のブラウザの写しも消えるように）。SDK は使わず REST で読み書きする。
+//  起動時と3分ごと（画面が見えている間）に、前回より新しい t の物だけ取りに行く。
 // =====================================================================
 const Images = (() => {
-  let db = null, local = new Map(), site = new Map();
+  let db = null;
+  const local = new Map(), shared = new Map(), site = new Map();
+  const SH = window.GW_SHARED || {};
+  const on = !!(SH.projectId && SH.apiKey);
+  const base = on ? `https://firestore.googleapis.com/v1/projects/${SH.projectId}/databases/(default)/documents` : '';
   const open = () => new Promise(res => {
     try {
-      const r = indexedDB.open('gw-images', 1);
-      r.onupgradeneeded = () => r.result.createObjectStore('img');
+      const r = indexedDB.open('gw-images', 2);
+      r.onupgradeneeded = () => {
+        if (!r.result.objectStoreNames.contains('img')) r.result.createObjectStore('img');
+        if (!r.result.objectStoreNames.contains('shared')) r.result.createObjectStore('shared');
+      };
       r.onsuccess = () => { db = r.result; res(); };
       r.onerror = () => res();
     } catch (e) { res(); }
   });
+  const each = (store, fn) => new Promise(res => {
+    const req = db.transaction(store).objectStore(store).openCursor();
+    req.onsuccess = () => { const c = req.result; if (c) { fn(c.key, c.value); c.continue(); } else res(); };
+    req.onerror = () => res();
+  });
+  const idbPut = (store, key, v) => new Promise((res, rej) => { const tx = db.transaction(store, 'readwrite'); tx.objectStore(store).put(v, key); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
+  const idbDel = (store, key) => new Promise(res => { const tx = db.transaction(store, 'readwrite'); tx.objectStore(store).delete(key); tx.oncomplete = res; tx.onerror = res; });
+  const setUrl = (m, key, blob) => { if (m.has(key)) URL.revokeObjectURL(m.get(key)); if (blob) m.set(key, URL.createObjectURL(blob)); else m.delete(key); };
+
   async function init() {
     await open();
-    if (db) await new Promise(res => {
-      const tx = db.transaction('img'), st = tx.objectStore('img');
-      const req = st.openCursor();
-      req.onsuccess = () => { const c = req.result; if (c) { local.set(c.key, URL.createObjectURL(c.value)); c.continue(); } else res(); };
-      req.onerror = () => res();
-    });
+    if (db) {
+      await each('img', (k, v) => local.set(k, URL.createObjectURL(v)));
+      await each('shared', (k, v) => v && v.b && shared.set(k, URL.createObjectURL(v.b)));
+    }
     if (location.protocol !== 'file:') try {   // images/index.json の形式：{"U-159": "U-159.jpg", "ザクII(スレンダー機)": "zaku_slender.jpg", ...}
       const r = await fetch('images/index.json', { cache: 'no-cache' });
       if (r.ok) Object.entries(await r.json()).forEach(([k, f]) => site.set(k, 'images/' + f));
     } catch (e) {}
+    if (on) {
+      sync();
+      setInterval(() => { if (!document.hidden) sync(); }, 180000);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - lastTry > 60000) sync(); });
+    }
   }
+
+  // ---- みんなの画像（Firestore REST）----
+  let lastTry = 0, syncing = false;
+  const LAST = 'gw-shared-last';
+  const docId = k => [...new TextEncoder().encode(k)].map(b => b.toString(16).padStart(2, '0')).join('');
+  const b64ToBlob = s => { const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Blob([u], { type: 'image/jpeg' }); };
+  const blobToB64 = b => new Promise(res => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.readAsDataURL(b); });
+  async function sync() {
+    if (!on || syncing || !db) return;
+    syncing = true; lastTry = Date.now();
+    let changed = 0;
+    try {
+      let last = +(localStorage.getItem(LAST) || 0);
+      for (let page = 0; page < 50; page++) {
+        const r = await fetch(`${base}:runQuery?key=${SH.apiKey}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ structuredQuery: {
+            from: [{ collectionId: 'images' }],
+            where: { fieldFilter: { field: { fieldPath: 't' }, op: 'GREATER_THAN', value: { integerValue: String(last) } } },
+            orderBy: [{ field: { fieldPath: 't' }, direction: 'ASCENDING' }],
+            limit: 40,
+          } }),
+        });
+        if (!r.ok) throw new Error('runQuery ' + r.status);
+        const docs = (await r.json()).filter(x => x.document).map(x => x.document.fields);
+        for (const f of docs) {
+          const k = f.k?.stringValue, d = f.d?.stringValue || '', t = +(f.t?.integerValue || 0);
+          if (!k) continue;
+          if (d) { const b = b64ToBlob(d); await idbPut('shared', k, { b, t }); setUrl(shared, k, b); }
+          else { await idbDel('shared', k); setUrl(shared, k, null); }
+          if (t > last) last = t;
+          changed++;
+        }
+        localStorage.setItem(LAST, String(last));
+        if (docs.length < 40) break;
+      }
+    } catch (e) { console.warn('みんなの画像を読めませんでした', e); }
+    syncing = false;
+    if (changed) window.dispatchEvent(new Event('gw-images'));
+  }
+  async function putShared(key, blob) {
+    if (!on) throw new Error('共有の設定がありません');
+    const t = Date.now();
+    const d = blob ? await blobToB64(blob) : '';
+    const r = await fetch(`${base}/images/${docId(key)}?key=${SH.apiKey}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: { k: { stringValue: key }, d: { stringValue: d }, t: { integerValue: String(t) } } }),
+    });
+    if (!r.ok) throw new Error('共有に送れませんでした（' + r.status + '）');
+    if (db) { if (blob) await idbPut('shared', key, { b: blob, t }); else await idbDel('shared', key); }
+    setUrl(shared, key, blob);
+  }
+
   // 収録番号ごと → カード名 の順に探す（同名で絵が同じなら名前で1枚登録すれば済む）
   function url(c) {
-    for (const k of [c.id, ...c.no, c.n]) { if (local.has(k)) return local.get(k); if (site.has(k)) return site.get(k); }
+    for (const k of [c.id, ...c.no, c.n]) { if (local.has(k)) return local.get(k); if (shared.has(k)) return shared.get(k); if (site.has(k)) return site.get(k); }
     return null;
   }
   async function put(key, blob) {
     if (!db) throw new Error('この環境では画像を保存できません');
-    await new Promise((res, rej) => { const tx = db.transaction('img', 'readwrite'); tx.objectStore('img').put(blob, key); tx.oncomplete = res; tx.onerror = () => rej(tx.error); });
-    if (local.has(key)) URL.revokeObjectURL(local.get(key));
-    local.set(key, URL.createObjectURL(blob));
+    await idbPut('img', key, blob);
+    setUrl(local, key, blob);
   }
   async function del(key) {
     if (!db) return;
-    await new Promise(res => { const tx = db.transaction('img', 'readwrite'); tx.objectStore('img').delete(key); tx.oncomplete = res; tx.onerror = res; });
-    local.delete(key);
+    await idbDel('img', key);
+    setUrl(local, key, null);
   }
   const hasLocal = c => local.has(c.n);
-  return { init, url, put, del, hasLocal };
+  const hasShared = c => shared.has(c.n);
+  return { init, url, put, del, hasLocal, hasShared, putShared, sync, get shareOn() { return on; } };
 })();
 
-// 長辺800pxに縮めてから保存（容量節約）
-async function shrink(file) {
+// 長辺 max px に縮めて JPEG に（容量節約）。みんなの画像は 1文書1MB までなので小さめにする
+async function shrink(file, max = 800, q = 0.85) {
   const img = await createImageBitmap(file);
-  const s = Math.min(1, 800 / Math.max(img.width, img.height));
+  const s = Math.min(1, max / Math.max(img.width, img.height));
   const cv = document.createElement('canvas');
   cv.width = Math.round(img.width * s); cv.height = Math.round(img.height * s);
   cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-  return await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.85));
+  return await new Promise(r => cv.toBlob(r, 'image/jpeg', q));
 }
 
 // =====================================================================
@@ -615,10 +692,15 @@ function openSheet(id) {
       <div class="row">
         <button id="imgSet">画像を設定</button>
         <button id="imgPaste" title="コピーした画像を貼ります（この画面で Ctrl+V でも貼れます）">クリップボードから貼る</button>
-        ${Images.hasLocal(c) ? '<button id="imgDel" class="ghost">画像を外す</button>' : ''}
+        ${Images.hasLocal(c) ? `<button id="imgDel" class="ghost">${Images.shareOn ? '自分だけの画像を外す' : '画像を外す'}</button>` : ''}
+        ${Images.shareOn && Images.hasLocal(c) ? '<button id="imgUp" class="ghost" title="このブラウザだけの画像を、みんなの画像にします">みんなに出す</button>' : ''}
+        ${Images.hasShared(c) ? '<button id="imgDelS" class="ghost">みんなの画像を外す</button>' : ''}
         <button id="sheetClose" class="primary" style="margin-left:auto">閉じる</button>
       </div>
-      <div class="note">画像はこのブラウザにだけ保存され、同じ名前のカードに共通で使われます。サイトの画像を右クリック→「画像をコピー」してから、この画面で Ctrl+V（または「クリップボードから貼る」）でも入れられます。</div>
+      <div class="note">${Images.shareOn
+        ? '入れた画像は<b>みんなの画像</b>になり、サイトを開いた全員に見えます（同じ名前のカード共通。数分で届きます）。自分のブラウザだけの画像がある時はそちらが先に出ます。'
+        : '画像はこのブラウザにだけ保存され、同じ名前のカードに共通で使われます。'}サイトの画像を右クリック→「画像をコピー」してから、この画面で Ctrl+V（または「クリップボードから貼る」）でも入れられます。
+        ${Images.shareOn && Images.hasLocal(c) ? '<br><a href="#" id="imgUpAll">このブラウザだけの画像を全部みんなに出す</a>' : ''}</div>
     </div>`;
   $('sheet').classList.add('on');
 }
@@ -638,12 +720,43 @@ $('sheet').onclick = async e => {
     } catch (err) { toast('このブラウザでは読めませんでした。この画面で Ctrl+V を押して貼ってください'); }
   }
   if (e.target.id === 'imgDel') { await Images.del(BY_ID.get(sheetId).n); renderAll(true); toast('画像を外しました'); }
+  if (e.target.id === 'imgDelS') {
+    try { await Images.putShared(BY_ID.get(sheetId).n, null); renderAll(true); toast('みんなの画像を外しました'); } catch (err) { toast(err.message); }
+  }
+  if (e.target.id === 'imgUp') {
+    const n = BY_ID.get(sheetId).n;
+    try { await Images.putShared(n, await shrink(await (await fetch(Images.url({ id: '', no: [], n }))).blob(), 600, 0.8)); await Images.del(n); renderAll(true); toast('みんなの画像にしました'); } catch (err) { toast(err.message); }
+  }
+  if (e.target.id === 'imgUpAll') { e.preventDefault(); upAllLocal(); }
 };
 async function setImage(f) {
   if (!f || !sheetId) return;
-  try { await Images.put(BY_ID.get(sheetId).n, await shrink(f)); renderAll(true); toast('画像を設定しました'); }
+  const n = BY_ID.get(sheetId).n;
+  if (Images.shareOn) {
+    // みんなの画像に入れる。自分だけの画像が残っているとそちらが先に出るので外す
+    try { await Images.putShared(n, await shrink(f, 600, 0.8)); if (Images.hasLocal({ n })) await Images.del(n); renderAll(true); toast('みんなの画像にしました'); }
+    catch (err) { toast(err.message || '画像を送れませんでした'); }
+    return;
+  }
+  try { await Images.put(n, await shrink(f)); renderAll(true); toast('画像を設定しました'); }
   catch (err) { toast('画像を保存できませんでした'); }
 }
+// このブラウザだけの画像（カード名で入れた物）を全部みんなの画像に移す
+async function upAllLocal() {
+  const names = [...new Set(CARDS.map(c => c.n))].filter(n => Images.hasLocal({ n }));
+  if (!names.length) { toast('このブラウザだけの画像はありません'); return; }
+  if (!confirm(`このブラウザだけの画像 ${names.length}枚を、みんなの画像に出します。よろしいですか？`)) return;
+  let ok = 0;
+  for (const n of names) {
+    try {
+      const b = await (await fetch(Images.url({ id: '', no: [], n }))).blob();
+      await Images.putShared(n, await shrink(b, 600, 0.8)); await Images.del(n); ok++;
+      toast(`みんなに出しています… ${ok}/${names.length}`);
+    } catch (err) { console.warn(n, err); }
+  }
+  renderAll(true); toast(`${ok}枚をみんなの画像にしました` + (ok < names.length ? `（${names.length - ok}枚は失敗）` : ''));
+}
+window.addEventListener('gw-images', () => renderAll(true));
 $('imgFile').onchange = e => { const f = e.target.files[0]; e.target.value = ''; setImage(f); };
 // カードの詳細を開いている間の Ctrl+V：クリップボードの画像をそのカードの画像にする
 document.addEventListener('paste', e => {
@@ -673,6 +786,6 @@ if (!CARDS.length) document.body.innerHTML = '<p style="padding:20px">cards.js �
 else { renderAll(); Images.init().then(() => renderAll()); }
 </script>
 <script src="lib/peerjs.min.js"></script>
-<script src="battle.js?v=20261113a"></script>
+<script src="battle.js?v=20261113b"></script>
 </body>
 </html>

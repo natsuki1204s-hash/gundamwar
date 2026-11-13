@@ -1304,4 +1304,5 @@ root.addEventListener('drop', e => {
 document.querySelector('nav.tabs button[data-view="battle"]').addEventListener('click', () => { if (!B.S) renderLobby(); else render(); });
 renderLobby();
 window.GWB = B; // 調べ物用
+window.addEventListener('gw-images', () => { if (B.S) render(); });   // みんなの画像が届いたら描き直す
 })();
