@@ -1,6 +1,6 @@
 /* ===== 対戦卓 ===== */
 /* カードの高さは画面の高さから決める（縦に5段並ぶ） */
-#battle{--ch:clamp(56px,calc((100vh - 250px) / 5),120px);--cw:calc(var(--ch) * .713)}
+#battle{--ch:clamp(56px,calc((100vh - 262px) / 5),120px);--cw:calc(var(--ch) * .713)}
 #battle{gap:0;align-items:stretch}
 .blobby{margin:auto;max-width:520px;width:100%;padding:24px 16px;display:flex;flex-direction:column;gap:14px}
 .blobby h2{margin:0;font-size:20px}
@@ -8,7 +8,8 @@
 .blobby input{flex:1}
 .blobby .code-in{text-transform:uppercase;letter-spacing:.1em}
 
-.bboard{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+.bboard{flex:1;min-width:0;display:flex;flex-direction:row;min-height:0}
+.bmain{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
 .bside{width:300px;flex:none;border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:#171a20}
 .binfo{padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px;display:flex;flex-direction:column;gap:4px}
 .binfo .roomcode{font-size:20px;font-weight:800;letter-spacing:.08em;color:var(--accent);cursor:pointer}
@@ -59,7 +60,7 @@
 .zone.dep{flex:1 1 auto}
 .piles{display:flex;gap:4px;flex:none}
 .pile{width:calc(var(--cw) + 10px);min-width:62px;flex:none;cursor:pointer}
-.pile>.zl{font-size:10px;letter-spacing:-.04em}
+.pile>.zl{font-size:9.5px;letter-spacing:-.06em}
 .pile .zc{justify-content:center;flex-wrap:nowrap;overflow:visible}
 .pile .num{position:absolute;left:0;right:0;top:calc(50% + 6px);transform:translateY(-50%);text-align:center;font-weight:900;font-size:clamp(20px,calc(var(--ch) * .34),38px);line-height:1;color:#fff;pointer-events:none;
   text-shadow:0 0 2px #000,0 0 4px #000,0 0 8px #000,0 0 12px #000a;font-variant-numeric:tabular-nums}
@@ -116,8 +117,14 @@
 body:has(#battle.on) #toast{bottom:auto;top:56px}
 
 /* フェイズの帯・ターンプレイヤー */
-.bphase{display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:4px 8px;border-bottom:1px solid var(--line);background:#14171d;font-size:12px}
-.bphase .who{background:#3a3424;color:var(--accent);border-radius:4px;padding:1px 8px;font-weight:700;margin-right:6px}
+/* 左端の縦長の欄（2026-11-14 レイアウト変更）。上から ターン数・誰のターンか・フェイズ */
+.bphase{flex:0 0 86px;display:flex;flex-direction:column;align-items:stretch;gap:3px;padding:6px 5px;border-right:1px solid var(--line);background:#14171d;font-size:11.5px;overflow:auto;text-align:center}
+.bphase>b{font-size:13px;color:var(--text)}
+.bphase .note{font-size:11px;color:var(--sub);line-height:1.5;text-align:left}
+.bphase .who{background:#3a3424;color:var(--accent);border-radius:4px;padding:2px 4px;font-weight:700;line-height:1.3;margin-bottom:4px}
+.bphase .ph{display:block;line-height:1.25;padding:5px 3px!important}
+.bphase .ph small{display:block;font-size:9.5px;opacity:.8}
+.bphase .ph.bt{margin-left:6px}
 .bphase.mine .who{background:var(--accent);color:#1b1a17}
 .bphase .ph{padding:1px 6px;border-radius:4px;color:var(--sub);border:1px solid transparent}
 .bphase .ph.done{color:#6b7280}
@@ -216,3 +223,44 @@ body:has(#battle.on) #toast{bottom:auto;top:56px}
 .bfield.bg-earth>.zone,.bfield.bg-space>.zone{background:rgba(20,22,28,.18)}
 .bfield>.zone.over,.zone[data-zone="deploy"].over{box-shadow:inset 0 0 0 2px var(--accent)}
 .bfield>.zone>.zl,.zone[data-zone="deploy"]>.zl{text-shadow:0 1px 2px #000,0 0 3px #000}
+
+/* ===== レイアウト変更（2026-11-14、ナツキの手描き）=====
+   中段：宇宙 ｜ 本国・捨て山（相手は上、自分は下。点対称）｜ リング（第3の戦場）｜ 地球
+   自分の段：G ｜ ジャンクヤード・除外 ｜ 配備エリア。手札の右にコマンドとハンガー */
+.bring2{flex:none;display:flex;flex-direction:column;gap:4px;justify-content:space-between}
+.bring2 .rp{display:flex;gap:4px;flex:1}
+.bring2 .pile{flex:1 0 auto}
+.bfield.bg-ring{flex:0 1 auto;min-width:calc(var(--cw) + 14px);background:linear-gradient(rgba(14,16,22,.55),rgba(14,16,22,.55)),radial-gradient(circle at 50% 50%,#3a3424 0,#1b1a17 70%)}
+.bfield.bg-ring>.zone>.zl{left:4px;right:auto}
+.bfield.bg-ring .leadbox{display:none}
+.bhalf>.zone.g{order:0}
+.bhand{display:flex;align-items:stretch}
+.bhand>.zone.hz{flex:1 1 auto;min-width:0}
+.bside2{display:flex;gap:4px;flex:none;padding:3px 6px 3px 0}
+.bside2>.zone{background:#191c23}
+.bside2>.zone.cmd{width:calc(var(--cw) * 2 + 18px)}
+.bside2>.zone.hang{width:calc(var(--cw) * 4 + 26px)}
+.bside2 .zone>.zc{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden}
+.btop{display:flex;align-items:center;gap:6px;padding-right:8px}
+.btop>.bstrip{flex:1;min-width:0}
+.bside2.mini{--ch:34px;--cw:24px;padding:1px 0}
+.bside2.mini>.zone{flex-direction:row;align-items:center;gap:4px;padding:2px 4px}
+.bside2.mini>.zone>.zl{padding:0;font-size:10px}
+.bside2.mini>.zone>.zc{min-height:calc(var(--ch) + 2px)}
+.bside2.mini>.zone.cmd{width:150px}
+.bside2.mini>.zone.hang{width:240px}
+.bside2.mini .mc{font-size:6.5px;padding:1px}
+.bside2.mini .mc .mst,.bside2.mini .mc .malt{display:none}
+/* ヴァリアブル：逆向き（180度）で配備エリアに。G扱いの印 */
+.slot.vb>.mc{transform:rotate(180deg)}
+.slot.r.vb>.mc{transform:rotate(270deg)}
+.vbtag{position:absolute;left:50%;top:calc(50% - 8px);transform:translateX(-50%);z-index:3;background:var(--cc);color:#fff;border:1px solid #000a;border-radius:4px;padding:0 5px;font-size:10.5px;font-weight:900;line-height:1.4;text-shadow:0 1px 2px #000;white-space:nowrap;pointer-events:none;box-shadow:0 1px 3px #000c}
+.vbtag[style*="白"]{color:#1b1b1f;text-shadow:none}
+/* 本国・捨て山（中段）は名前をカードに重ねて背を低く */
+.bring2 .pile{padding:2px}
+.bring2 .pile>.zl{position:absolute;left:3px;top:1px;z-index:1;font-size:9.5px;text-shadow:0 1px 2px #000,0 0 3px #000}
+.bring2 .pile>.zc{min-height:0;align-items:center}
+.bring2 .pile .num{top:50%}
+.bphase .phbtn{margin-top:auto;display:flex;flex-direction:column;gap:4px;padding-top:6px}
+.bphase .phbtn button{padding:5px 2px;font-size:12px}
+.bphase .phbtn button{white-space:nowrap;font-size:11px}

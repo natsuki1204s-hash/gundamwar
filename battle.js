@@ -15,12 +15,16 @@ if (!CARDS.length) return;
 
 const PFX = 'gundamwar-taku-';
 const LOCAL = new URLSearchParams(location.search).has('local');
-const ZONES = { G: 'G', deploy: '配備エリア', space: '戦闘エリア（宇宙）', earth: '戦闘エリア（地球）', junk: 'ジャンクヤード', discard: '捨て山', removed: '除外' };
+const ZONES = { G: 'G', deploy: '配備エリア', space: '戦闘エリア（宇宙）', earth: '戦闘エリア（地球）', ring: 'リング', junk: 'ジャンクヤード', discard: '捨て山', removed: '除外', cmd: 'コマンド', hangar: 'ハンガー' };
 const PILES = ['junk', 'discard', 'removed'];
 const SECRET = ['discard'];   // 中身が誰にも見えない置き場（捨て山は非公開。枚数だけ見える）
 const PHASES = ['リロールフェイズ', 'ドローフェイズ', '配備フェイズ', '攻撃ステップ', '防御ステップ', 'ダメージ判定ステップ', '帰還ステップ', 'ターンエンド'];
 const HAND0 = 6;              // 最初の手札
-const MOVE_TO = ['deploy', 'space', 'earth', 'G', 'junk', 'discard', 'removed'];
+const MOVE_TO = ['deploy', 'space', 'earth', 'ring', 'G', 'cmd', 'hangar', 'junk', 'discard', 'removed'];
+// 前の版で作った盤面（リング・コマンド・ハンガーがない）を開き直した時のために、足りない置き場を足す
+const fillZones = S => S && S.seats.forEach(s => { for (const k in ZONES) if (!s.z[k]) s.z[k] = []; });
+// ヴァリアブル：手札・ハンガーから、自軍配備フェイズに配備エリアへリロール状態・逆向きで出し、そのカードの色の特殊Gとして扱う（Gのプレイ扱い）。c.vb
+const variN = x => { const m = x && (x.x || []).join(' ').match(/ヴァリアブル\s*[（(](\d+|X)[)）]/); return m ? m[1] : null; };
 const emptyZones = () => Object.fromEntries(Object.keys(ZONES).map(k => [k, []]));
 const emptySeat = () => ({ name: '', online: false, ready: false, deckName: '', dn: 0, hn: 0, z: emptyZones() });
 const rid = () => Math.random().toString(36).slice(2, 7);
@@ -30,7 +34,7 @@ const cname = c => { if (c && c.coin) return c.coin; const x = c && c.id && BY_I
 const COINS = ['コイン', '+1/+1/+1コイン', '-1/-1/-1コイン', '+2/+2/+2コイン', '解体コイン', '汚染コイン'];
 const COIN_ST = /^([+\-±]\d+)\/([+\-±]\d+)\/([+\-±]\d+)コイン$/;   // 戦闘力を変えるコイン（+1/+1/+1 など）
 const coinShort = n => { const m = COIN_ST.exec(n); return m ? m[1] : n.replace(/コイン$/, '').slice(0, 3) || '●'; };
-const BATTLE = ['space', 'earth'];
+const BATTLE = ['space', 'earth', 'ring'];   // リングは第3の戦場（使う時だけ）
 // 一時修正（コマンドや能力で一時的に変わった分）：c.tm = { d:[格闘,射撃,耐久], s:※を付けるか, m:メモ, k:ターン終了で消さない }
 const fmtMod = d => d.map(v => (v >= 0 ? '+' : '') + v).join('/');
 const tmLabel = tm => (tm.d.some(v => v) ? fmtMod(tm.d) : '') + (tm.s || tm.m ? '※' : '');
@@ -190,7 +194,8 @@ function apply(a, who) {
     case 'ready': seatObj.ready = true; seatObj.deckName = a.deckName || ''; log(`${nm}が「${seatObj.deckName}」で準備しました`, 'sys'); return;
     case 'enter': {   // 手札・本国から場へ
       const tz = S.seats[a.seat ?? who.seat]?.z[a.zone]; if (!tz) return;
-      const cards = a.cards.map(c => ({ u: c.u, id: c.id, o: who.seat, r: false, f: !!a.f && !PILES.includes(a.zone), s: [] }));
+      const cards = a.cards.map(c => ({ u: c.u, id: c.id, o: who.seat, r: false, f: !!a.f && !PILES.includes(a.zone), s: [], ...(a.vb && a.zone === 'deploy' ? { vb: true } : {}) }));
+      if (a.vb && a.zone === 'deploy') { log(`${nm}が${a.src === 'hand' ? '手札' : '本国'}の『${cname(cards[0])}』をヴァリアブルで配備エリアへ（逆向き・${(BY_ID.get(cards[0].id) || {}).c || ''}の特殊G、Gのプレイとして）`); tz.push(...cards); return; }
       let onto = null;
       if (a.onto) { const t = findCard(S, a.onto); if (t && !t.c.coin) { onto = t.c; t.c.s.push(...cards); } else tz.push(...cards); }
       else tz.push(...cards);
@@ -219,15 +224,15 @@ function apply(a, who) {
       const card = f.c, subs = card.s || []; card.s = [];
       if (a.onto) {
         const t = findCard(S, a.onto); if (!t) { tz.push(card); return; }
-        card.v = false; t.c.s.push(card, ...subs);
+        card.v = false; card.vb = false; t.c.s.push(card, ...subs);
         log(`${nm}が『${cname(card)}』を『${cname(t.c)}』にセット`);
         return;
       }
       if (PILES.includes(a.zone)) {   // 捨て札置き場へは表向き・リロール状態で、セットしていたカードも一緒に
-        [card, ...subs].forEach(c => { c.r = false; c.f = false; c.v = false; c.s = []; delete c.cn; delete c.tm; tz.push(c); });
+        [card, ...subs].forEach(c => { c.r = false; c.f = false; c.v = false; c.vb = false; c.s = []; delete c.cn; delete c.tm; tz.push(c); });
         log(`${nm}が『${cname(card)}』${subs.length ? `（セット${subs.length}枚ごと）` : ''}を${zoneLabel(a.seat, a.zone)}へ`);
       } else {
-        card.s = subs; tz.push(card);
+        card.s = subs; if (card.vb && !['deploy', 'G'].includes(a.zone)) card.vb = false; tz.push(card);
         log(`${nm}が『${cname(card)}』を${zoneLabel(a.seat, a.zone)}へ`);
       }
       return;
@@ -292,6 +297,16 @@ function apply(a, who) {
     }
     case 'roll': { const f = findCard(S, a.u); if (!f || f.c.coin) return; f.c.r = !f.c.r; log(`${nm}が『${cname(f.c)}』を${f.c.r ? 'ロール' : 'リロール'}`); return; }
     case 'transform': { const f = findCard(S, a.u); if (!f) return; const x = BY_ID.get(f.c.id); if (!x || !x.alt) return; f.c.v = !f.c.v; log(`${nm}が『${cname(f.c)}』を${f.c.v ? `変形（${x.alt.name || '変形形態'}）` : '元の形態に戻す'}`); return; }
+    case 'vari': {   // ヴァリアブル：配備エリアへ逆向き・リロール状態で出して特殊G扱いに（もう一度で普通に戻す）
+      const f = findCard(S, a.u); if (!f || f.c.coin || f.parent || f.c.f) return;
+      const x = BY_ID.get(f.c.id); if (!x) return;
+      if (f.c.vb) { f.c.vb = false; log(`${nm}が『${x.n}』のヴァリアブルをやめました（普通の向きに）`); return; }
+      f.arr.splice(f.i, 1);
+      Object.assign(f.c, { vb: true, r: false, v: false });
+      S.seats[f.c.o].z.deploy.push(f.c);
+      log(`${nm}が${ZONES[f.zone]}の『${x.n}』をヴァリアブルで配備エリアへ（逆向き・${x.c}の特殊G、Gのプレイとして）`);
+      return;
+    }
     case 'flip': { const f = findCard(S, a.u); if (!f) return; f.c.f = !f.c.f; log(`${nm}が『${cname(f.c)}』を${f.c.f ? '裏' : '表'}向きに`); return; }
     case 'turn': {
       clearTm(S);
@@ -471,7 +486,7 @@ const takeFromLook = u => takeFrom(B.priv.look || (B.priv.look = []), u);
 function playFrom(take, src, u, zone, opt = {}) {
   if (!online()) { toast('つながっていません'); return; }
   const c = take(u); if (!c) return;
-  savePriv(); act({ t: 'enter', cards: [c], zone, seat: opt.seat ?? mySeat(), f: opt.f, onto: opt.onto, src });
+  savePriv(); act({ t: 'enter', cards: [c], zone, seat: opt.seat ?? mySeat(), f: opt.f, onto: opt.onto, src, vb: opt.vb });
 }
 const playFromHand = (u, zone, opt) => playFrom(takeFromHand, 'hand', u, zone, opt);
 const playFromDeck = (u, zone, opt) => playFrom(takeFromDeck, 'deck', u, zone, opt);
@@ -504,7 +519,7 @@ async function createRoom(resume) {
   }
   if (!hostObj) { lobbyMsg('部屋を作れませんでした：' + netErr(err)); return; }
   B.role = 'host'; B.code = code; B.seat = 0;
-  if (resume) { B.S = resume.S; B.rec = resume.rec || []; }
+  if (resume) { B.S = resume.S; B.rec = resume.rec || []; fillZones(B.S); }
   else B.S = { code, game: 1, turn: 0, active: null, seats: [emptySeat(), emptySeat()], log: [], spect: [] };
   B.S.seats[0].name = name; B.S.seats[0].online = true; B.S.seats[0].pk = null;
   B.S.seats.forEach((s, i) => { if (i) s.online = false; });
@@ -662,7 +677,8 @@ function slot(c, src, lead = false) {
   const v = c.v && !c.f && known && known.alt;
   const tmc = hasTm(c) ? ' tm' : '';
   const tmb = c.tm ? `<div class="tmb" title="${esc(tmTitle(c.tm))}">${esc(tmLabel(c.tm))}</div>` : '';
-  return `<div class="slot${c.r ? ' r' : ''}${v ? ' v' : ''}${lead ? ' lead1' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" ${known ? `data-cid="${esc(c.id)}"` : ''}>${lead ? '<span class="leadtag">先頭</span>' : ''}${(c.f && known) ? miniFace({}).replace('GW', '裏') : miniFace(c)}${coinBadges(c)}${tmb}${!subs && tot ? `<div class="gst ov${tmc}" title="コイン・一時修正込みの戦闘力">[${esc(tot.join(']['))}]</div>` : ''}${subs ? `<div class="subs">${tot ? `<div class="gst${tmc}" title="セットグループの合計（コイン・一時修正込み）">計[${esc(tot.join(']['))}]</div>` : ''}${subs}</div>` : ''}</div>`;
+  const vb = c.vb && !c.f && known;
+  return `<div class="slot${c.r ? ' r' : ''}${v ? ' v' : ''}${vb ? ' vb' : ''}${lead ? ' lead1' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" ${known ? `data-cid="${esc(c.id)}"` : ''}>${lead ? '<span class="leadtag">先頭</span>' : ''}${vb ? `<span class="vbtag" style="--cc:var(--c-${known.c})" title="ヴァリアブル：${known.c}の特殊G（国力${known.c}1）として扱います">G ${known.c}</span>` : ''}${(c.f && known) ? miniFace({}).replace('GW', '裏') : miniFace(c)}${coinBadges(c)}${tmb}${!subs && tot ? `<div class="gst ov${tmc}" title="コイン・一時修正込みの戦闘力">[${esc(tot.join(']['))}]</div>` : ''}${subs ? `<div class="subs">${tot ? `<div class="gst${tmc}" title="セットグループの合計（コイン・一時修正込み）">計[${esc(tot.join(']['))}]</div>` : ''}${subs}</div>` : ''}</div>`;
 }
 function zoneHtml(seat, z, cls = '') {
   const arr = VS.seats[seat].z[z];
@@ -674,7 +690,7 @@ function zoneHtml(seat, z, cls = '') {
   const bat = BATTLE.includes(z), fo = bat ? forceOf(arr) : null;
   const lead = bat && !fo ? '<div class="leadbox" title="戦闘エリアは左が先頭です（カードのメニューで前後を入れ替え）"><span>先頭</span></div>' : '';
   const force = fo ? `<b class="bforce${fo.unk ? ' unk' : ''}" title="部隊戦闘力＝先頭のユニットの格闘力＋2番目からのユニットの射撃力（コイン・一時修正込み）\n${esc(fo.note)}${fo.unk ? '\n数字でない所（*など）は0として数えています' : ''}">部隊戦闘力 ${fo.total}${fo.unk ? '＋？' : ''}</b>` : '';
-  const add = isPlayer() && seat === mySeat() ? `<span class="zadd" data-coinzone="${z}" title="この置き場にコインを置きます（カードの上に乗せるのはカードのメニューか、コインをカードへドラッグ）">＋コイン</span>` : '';
+  const add = isPlayer() && seat === mySeat() && !['cmd', 'hangar'].includes(z) ? `<span class="zadd" data-coinzone="${z}" title="この置き場にコインを置きます（カードの上に乗せるのはカードのメニューか、コインをカードへドラッグ）">＋コイン</span>` : '';
   return `<div class="zone ${cls}${bat ? ' bat' : ''}" data-seat="${seat}" data-zone="${z}"><div class="zl">${force}${ZONES[z]}${arr.length ? `（${arr.length}）` : ''}${add}</div><div class="zc">${lead}${arr.map(c => slot(c, 'pub', !!fo && c.u === fo.lead)).join('')}</div></div>`;
 }
 function deckPile(seat) {
@@ -684,8 +700,11 @@ function deckPile(seat) {
 }
 function rowHtml2(seat) {
   return `<div class="bhalf${VS.active === seat ? ' active' : ''}">
-    <div class="piles">${deckPile(seat)}${zoneHtml(seat, 'discard')}${zoneHtml(seat, 'junk')}${zoneHtml(seat, 'removed')}</div>
-    ${gZoneHtml(seat)}${zoneHtml(seat, 'deploy', 'dep')}</div>`;
+    ${gZoneHtml(seat)}<div class="piles">${zoneHtml(seat, 'junk')}${zoneHtml(seat, 'removed')}</div>${zoneHtml(seat, 'deploy', 'dep')}</div>`;
+}
+// コマンド・ハンガー（自分は手札の右に。相手と観戦の見る席は名前の行に小さく）
+function sideZones(seat, mini) {
+  return `<div class="bside2${mini ? ' mini' : ''}">${zoneHtml(seat, 'cmd', 'cmd')}${zoneHtml(seat, 'hangar', 'hang')}</div>`;
 }
 // ---------------------------------------------------------------------
 //  G 置き場：基本Gは色ごとの束（例「緑×4」）、特殊G・裏向き・セット付きは1枚ずつ。
@@ -695,9 +714,10 @@ const GCOL = ['白', '青', '緑', '黒', '赤', '茶', '紫'];
 const gOpen = new Set();       // 束を広げて見ている席（自分の画面だけ）
 function gPower(seat) {
   const pow = {}, cnt = {}, roll = {}; let unk = 0;
-  for (const c of VS.seats[seat].z.G) {
+  const z = VS.seats[seat].z;
+  for (const c of [...z.G, ...(z.deploy || []).filter(c => c.vb)]) {   // ヴァリアブルで出したカードも、その色の特殊Gとして数える
     if (c.coin) continue;
-    const x = !c.f && c.id && BY_ID.get(c.id), gp = x && x.gp;
+    const x = !c.f && c.id && BY_ID.get(c.id), gp = x && (c.vb ? [x.c, 1, ''] : x.gp);
     if (!gp) { unk++; continue; }
     const [col, k, cond] = gp;
     cnt[col] = (cnt[col] || 0) + 1;
@@ -732,7 +752,8 @@ function gSummary(seat) {
     return `<span class="gchip${p ? '' : ' zero'}" style="--cc:var(--c-${c})" title="${c}：国力${p}（${cnt[c]}枚${roll[c] ? `、ロール${roll[c]}` : ''}）">${c}${p}${more}${r}</span>`;
   }).join('') + (unk ? `<span class="gchip unk" title="出す国力がデータで分からないG（裏向き・効果で決まる物など）。人が判断してください">？${unk}</span>` : '');
   const tog = arr.length ? `<span class="gtog" data-gtog="${seat}">${gOpen.has(seat) ? '束ねる' : '広げる'}</span>` : '';
-  return `<div class="zl gsum" title="今発生している国力 ${total}">G<b>${arr.length ? arr.length + '枚' : ''}</b>${chips}${tog}</div>`;
+  const nv = (VS.seats[seat].z.deploy || []).filter(c => c.vb).length;
+  return `<div class="zl gsum" title="今発生している国力 ${total}${nv ? `（配備エリアのヴァリアブル${nv}枚を含む）` : ''}">G<b>${arr.length ? arr.length + '枚' : ''}${nv ? `<small title="配備エリアにヴァリアブルで出したカード">+V${nv}</small>` : ''}</b>${chips}${tog}</div>`;
 }
 function gZoneHtml(seat) {
   const arr = VS.seats[seat].z.G;
@@ -780,10 +801,12 @@ function seatStrip(seat, me) {
   return `<div class="bstrip"><b>${esc(s.name || `席${seat + 1}`)}</b>${status}${act}<span>${s.ready ? esc(s.deckName) : (s.name ? '準備中…' : '')}</span><span>${hand}</span></div>`;
 }
 function phaseBar(S, me) {
-  if (S.active == null) return `<div class="bphase"><span class="note">${S.seats.every(s => s.su === 'done') ? '両者の手札が決まりました。先攻を決めてください' : '両者が「ゲームスタート」で手札を決めたら、先攻を決めます'}</span></div>`;
+  // 左端の縦長の欄：今どのフェイズか
+  if (S.active == null) return `<div class="bphase"><b>準備中</b><span class="note">${S.seats.every(s => s.su === 'done') ? '両者の手札が決まりました。先攻を決めてください' : '両者が「ゲームスタート」で手札を決めたら、先攻を決めます'}</span></div>`;
   const mine = S.active === me && isPlayer();
-  return `<div class="bphase${mine ? ' mine' : ''}"><b>第${S.turn}ターン</b><span class="who">${mine ? 'あなた' : esc(S.seats[S.active].name || `席${S.active + 1}`)}のターン</span>
-    ${PHASES.map((p, i) => `<span class="ph${i === S.phase ? ' on' : ''}${i < S.phase ? ' done' : ''}" ${mine ? `data-ph="${i}" title="押すとこのフェイズにします"` : ''}>${p}</span>`).join('<span class="ar">›</span>')}</div>`;
+  return `<div class="bphase${mine ? ' mine' : ''}"><b>第${S.turn}ターン</b><span class="who">${mine ? 'あなた' : esc(S.seats[S.active].name || `席${S.active + 1}`)}<br>のターン</span>
+    ${PHASES.map((p, i) => `<span class="ph${i === S.phase ? ' on' : ''}${i < S.phase ? ' done' : ''}${i >= 3 && i <= 6 ? ' bt' : ''}" ${mine ? `data-ph="${i}" title="押すとこのフェイズにします"` : ''}>${p.replace(/(フェイズ|ステップ)$/, '<small>$1</small>')}</span>`).join('')}
+    ${mine ? `<div class="phbtn">${S.phase < PHASES.length - 1 ? `<button id="bNext" class="primary" title="次へ：${PHASES[S.phase + 1]}">次へ ▼</button>` : ''}<button id="bEnd" ${S.phase === PHASES.length - 1 ? 'class="primary"' : ''}>ターンエンド</button></div>` : isPlayer() ? '<span class="note" style="text-align:center">相手のターンです</span>' : ''}</div>`;
 }
 // 公開中の手札を管理役へ知らせる（手札が変わって公開中のカードが出ていったら、その分も）
 function syncShow() {
@@ -832,9 +855,7 @@ function render() {
     } else {
       const mine = S.active === me;
       ctl = (S.active == null ? `<button id="bFirst" class="primary">自分が先攻</button><button id="bFirstR">先攻をランダムで決める</button>`
-          : mine ? (S.phase < PHASES.length - 1 ? `<button id="bNext" class="primary">次へ：${PHASES[S.phase + 1]}</button>` : '') + `<button id="bEnd" ${S.phase === PHASES.length - 1 ? 'class="primary"' : ''}>ターンエンド</button>`
-          : '<span class="note">相手のターンです</span>') + `
-        <span class="sep"></span>
+          : '') + `
         <input type="number" id="bN" min="1" max="50" value="${esc(nVal)}" title="枚数"><span>枚を</span>
         <button id="bDraw">引く</button><button id="bMill" title="戦闘ダメージ・資源など">本国→捨て山</button><button id="bHeal" title="回復：捨て山の上から枚数ぶんを、裏向きのまま1枚ずつ本国の上へ">回復</button><button id="bLook" title="サーチ：上から見て選び、残りを上か下へ好きな順で戻す">上から見る</button>
         ${B.priv.look?.length ? `<button id="bLookOpen" class="primary">見ているカード（${B.priv.look.length}）</button>` : ''}
@@ -852,18 +873,22 @@ function render() {
   root.innerHTML = `
   <div class="bboard">
     ${phaseBar(S, me)}
+    <div class="bmain">
     ${B.lost ? `<div class="bbanner">部屋の管理役との接続が切れました。<button id="bRejoin">入り直す</button></div>` : ''}
-    ${seatStrip(op, false)}
+    <div class="btop">${seatStrip(op, false)}${sideZones(op, true)}</div>
     ${shownRow(op)}
     ${rowHtml2(op)}
     <div class="bmid">
       <div class="bfield bg-space">${zoneHtml(op, 'space')}${zoneHtml(me, 'space')}</div>
+      <div class="bring2"><div class="rp">${zoneHtml(op, 'discard')}${deckPile(op)}</div><div class="rp">${deckPile(me)}${zoneHtml(me, 'discard')}</div></div>
+      <div class="bfield bg-ring">${zoneHtml(op, 'ring')}${zoneHtml(me, 'ring')}</div>
       <div class="bfield bg-earth">${zoneHtml(op, 'earth')}${zoneHtml(me, 'earth')}</div>
     </div>
     ${rowHtml2(me)}
-    ${B.role === 'spect' ? seatStrip(me, true) + shownRow(me) : ''}
-    ${B.role !== 'spect' ? `<div class="bhand"><div class="zone" data-seat="${me}" data-zone="hand"><div class="zl"><b>${esc(S.seats[me].name)}</b>${S.active === me ? ' <span style="color:var(--accent)">● あなたのターン</span>' : ''}　手札（${B.priv ? B.priv.hand.length : 0}）${showing ? `<span class="shnote">● ${mySh.size}枚を公開中</span><button id="bShowOff" class="mini">公開を終える</button>` : '※自分にだけ見えます'}</div><div class="zc">${myHand}</div></div></div>` : ''}
+    ${B.role === 'spect' ? `<div class="btop">${seatStrip(me, true)}${sideZones(me, true)}</div>` + shownRow(me) : ''}
+    ${B.role !== 'spect' ? `<div class="bhand"><div class="zone hz" data-seat="${me}" data-zone="hand"><div class="zl"><b>${esc(S.seats[me].name)}</b>${S.active === me ? ' <span style="color:var(--accent)">● あなたのターン</span>' : ''}　手札（${B.priv ? B.priv.hand.length : 0}）${showing ? `<span class="shnote">● ${mySh.size}枚を公開中</span><button id="bShowOff" class="mini">公開を終える</button>` : '※自分にだけ見えます'}</div><div class="zc">${myHand}</div></div>${sideZones(me, false)}</div>` : ''}
     <div class="bctl">${ctl}</div>
+    </div>
   </div>
   <div class="bside">
     <div class="binfo">
@@ -984,7 +1009,7 @@ function coinMenu(f, x, y) {
   menu(x, y, `${c.coin} ×${c.n}（${zoneLabel(f.seat, f.zone)}）`, [
     ['1枚足す', () => act({ t: 'coin', u, d: 1 })],
     ['1枚減らす', () => act({ t: 'coin', u, d: -1 })], '-',
-    ...['deploy', 'space', 'earth', 'G'].filter(z => z !== f.zone).map(z => [`${ZONES[z]}へ`, () => act({ t: 'move', u, seat: f.seat, zone: z })]),
+    ...['deploy', 'space', 'earth', 'ring', 'G'].filter(z => z !== f.zone).map(z => [`${ZONES[z]}へ`, () => act({ t: 'move', u, seat: f.seat, zone: z })]),
     ...BATTLE.includes(f.zone) || f.zone === 'deploy' ? [['左へ（前へ）', () => act({ t: 'zorder', u, d: -1 })], ['右へ（後ろへ）', () => act({ t: 'zorder', u, d: 1 })]] : [], '-',
     ['取り除く', () => act({ t: 'leave', u, to: 'hand' })]
   ]);
@@ -994,8 +1019,10 @@ function pubMenu(u, x, y) {
   if (f.c.coin) return coinMenu(f, x, y);
   const c = f.c, owner = c.o, mine = owner === B.seat;
   const cn = Object.entries(c.cn || {});
+  const vx = !c.f && variN(BY_ID.get(c.id));
   const items = [
     [c.r ? 'リロール（縦に）' : 'ロール（横に）', () => act({ t: 'roll', u })],
+    ...vx && !f.parent ? [[c.vb ? 'ヴァリアブルをやめる（普通の向き・G扱いをやめる）' : `ヴァリアブル(${vx})：配備エリアへ逆向きで出す（${BY_ID.get(c.id).c}の特殊G）`, () => act({ t: 'vari', u })]] : [],
     ...((BY_ID.get(c.id) || {}).alt && !c.f ? [[c.v ? '元の形態に戻す' : `変形（${BY_ID.get(c.id).alt.name || '変形形態'}）`, () => act({ t: 'transform', u })]] : []),
     [c.f ? '表にする' : '裏にする', () => act({ t: 'flip', u })], '-',
     ...MOVE_TO.filter(z => !(z === f.zone && f.seat === owner && !f.parent)).map(z => [`${ZONES[z]}へ`, () => act({ t: 'move', u, seat: owner, zone: z })]),
@@ -1021,7 +1048,8 @@ function pubMenu(u, x, y) {
 function handMenu(u, x, y) {
   const c = B.priv.hand.find(c => c.u === u); if (!c) return;
   menu(x, y, cname(c), [
-    ...['deploy', 'G', 'space', 'earth'].map(z => [`${ZONES[z]}へ出す`, () => playFromHand(u, z)]),
+    ...variN(BY_ID.get(c.id)) ? [[`ヴァリアブル(${variN(BY_ID.get(c.id))})：配備エリアへ逆向きで出す（${BY_ID.get(c.id).c}の特殊G・Gのプレイ）`, () => playFromHand(u, 'deploy', { vb: true })], '-'] : [],
+    ...['deploy', 'G', 'space', 'earth', 'cmd', 'hangar'].map(z => [`${ZONES[z]}へ出す`, () => playFromHand(u, z)]),
     ['裏向きで配備エリアへ', () => playFromHand(u, 'deploy', { f: true })],
     ...(B.priv.show || []).includes(u)
       ? [['このカードの公開をやめる', () => setShow(B.priv.show.filter(x => x !== u), false)]]
@@ -1038,7 +1066,7 @@ function deckCardMenu(u, x, y, after) {
   const done = () => { savePriv(); render(); after(); };
   menu(x, y, cname(c), [
     ['手札に加える', () => { B.priv.hand.push(takeFromDeck(u)); done(); act({ t: 'note', msg: '本国から1枚手札に加えました' }); }],
-    ...['deploy', 'G', 'discard', 'junk', 'removed'].map(z => [`${ZONES[z]}へ出す`, () => { playFromDeck(u, z); after(); }]), '-',
+    ...['deploy', 'G', 'hangar', 'discard', 'junk', 'removed'].map(z => [`${ZONES[z]}へ出す`, () => { playFromDeck(u, z); after(); }]), '-',
     ['一番上へ', () => { B.priv.deck.unshift(takeFromDeck(u)); done(); }],
     ['一番下へ', () => { B.priv.deck.push(takeFromDeck(u)); done(); act({ t: 'note', msg: '本国の1枚を一番下にしました' }); }]
   ]);
@@ -1154,7 +1182,7 @@ function discardCardMenu(u, x, y) {
     ['本国の上へ', () => act({ t: 'leave', u, to: 'top' })],
     ['本国の下へ', () => act({ t: 'leave', u, to: 'bottom' })],
     '-',
-    ...['deploy', 'G', 'space', 'earth', 'junk', 'removed'].map(z => [`${ZONES[z]}へ出す`, () => act({ t: 'move', u, seat: c.o, zone: z })]),
+    ...['deploy', 'G', 'hangar', 'space', 'earth', 'junk', 'removed'].map(z => [`${ZONES[z]}へ出す`, () => act({ t: 'move', u, seat: c.o, zone: z })]),
     '-',
     ['捨て山の一番上へ', () => act({ t: 'preorder', u, to: 'top' })],
     ['捨て山の一番下へ', () => act({ t: 'preorder', u, to: 'bottom' })]
@@ -1207,7 +1235,7 @@ function lookMenu(u, x, y) {
   menu(x, y, cname(c), [
     ['手札に加える', () => { B.priv.hand.push(takeFromLook(u)); savePriv(); act({ t: 'note', msg: '見ているカードから1枚を手札に加えました' }); after(); }],
     ['公開して手札に加える', () => { B.priv.hand.push(takeFromLook(u)); savePriv(); act({ t: 'reveal', ids: [c.id], what: '手札に加えるカード' }); after(); }],
-    ...['deploy', 'G', 'junk', 'discard', 'removed'].map(z => [`${ZONES[z]}へ出す`, () => { playFromLook(u, z); after(); }]), '-',
+    ...['deploy', 'G', 'hangar', 'junk', 'discard', 'removed'].map(z => [`${ZONES[z]}へ出す`, () => { playFromLook(u, z); after(); }]), '-',
     ['これだけ本国の上へ', () => { B.priv.deck.unshift(takeFromLook(u)); savePriv(); act({ t: 'note', msg: '見ているカードを1枚本国の上に置きました' }); after(); }],
     ['これだけ本国の下へ', () => { B.priv.deck.push(takeFromLook(u)); savePriv(); act({ t: 'note', msg: '見ているカードを1枚本国の下に置きました' }); after(); }]
   ]);
