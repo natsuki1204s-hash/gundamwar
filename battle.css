@@ -230,7 +230,8 @@ body:has(#battle.on) #toast{bottom:auto;top:56px}
 .bring2{flex:none;display:flex;flex-direction:column;gap:4px;justify-content:space-between}
 .bring2 .rp{display:flex;gap:4px;flex:1}
 .bring2 .pile{flex:1 0 auto}
-.bfield.bg-ring{flex:0 1 auto;min-width:calc(var(--cw) + 14px);background:linear-gradient(rgba(14,16,22,.55),rgba(14,16,22,.55)),radial-gradient(circle at 50% 50%,#3a3424 0,#1b1a17 70%)}
+.bfield.bg-ring{flex:0 1 auto;min-width:calc(var(--cw) + 14px);background-size:cover;background-position:center;background-image:linear-gradient(rgba(14,16,22,.55),rgba(14,16,22,.55)),url(img/bg/ring.webp)}
+.bfield.bg-ring>.zone{background:rgba(20,22,28,.18)}
 .bfield.bg-ring>.zone>.zl{left:4px;right:auto}
 .bfield.bg-ring .leadbox{display:none}
 .bhalf>.zone.g{order:0}
