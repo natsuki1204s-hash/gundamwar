@@ -103,6 +103,9 @@ main{height:calc(100% - 48px)}
 .sheet-info .sub{color:var(--sub);font-size:12px}
 .sheet-info .txt{background:#11131a;border-radius:8px;padding:8px 10px;line-height:1.6}
 .sheet-info .txt p{margin:0 0 4px}
+.oldimg{display:flex;gap:8px;align-items:flex-start;background:#2a2410;border:1px solid #6a5a20;border-radius:8px;padding:6px;font-size:12px;line-height:1.5}
+.oldimg img{width:60px;border-radius:4px;flex:none}
+.oldimg button{margin-top:4px}
 .qty{display:flex;align-items:center;gap:8px}
 .qty button{width:40px;height:40px;font-size:20px;padding:0}
 .qty b{font-size:20px;min-width:24px;text-align:center}
@@ -145,7 +148,7 @@ dialog .row{justify-content:flex-end;margin-top:10px}
   nav.tabs button{padding:5px 8px}
 }
 </style>
-<link rel="stylesheet" href="battle.css?v=20261114c">
+<link rel="stylesheet" href="battle.css?v=20261115a">
 </head>
 <body>
 <header>
@@ -297,7 +300,7 @@ function saveDecks() { cur().updated = Date.now(); store.set('decks', decks); st
 //            ② みんなの画像（shared.js の Firebase に誰かが入れた物。IndexedDB の shared に写しを持つ）
 //            ③ サイトの images/ フォルダ（images/index.json に載っているもの）
 //            ④ なければカード風の枠
-//  みんなの画像は Firestore の images コレクションに1カード名1文書 {k: カード名, d: JPEG の base64, t: 入れた時刻ms}。
+//  みんなの画像は Firestore の images コレクションに1カード1文書 {k: カードの id（前の版で入れた物はカード名）, d: JPEG の base64, t: 入れた時刻ms}。
 //  消す時は d を '' にして残す（他の人のブラウザの写しも消えるように）。SDK は使わず REST で読み書きする。
 //  起動時と3分ごと（画面が見えている間）に、前回より新しい t の物だけ取りに行く。
 // =====================================================================
@@ -396,11 +399,20 @@ const Images = (() => {
     setUrl(shared, key, blob);
   }
 
-  // 収録番号ごと → カード名 の順に探す（同名で絵が同じなら名前で1枚登録すれば済む）
-  function url(c) {
-    for (const k of [c.id, ...c.no, c.n]) { if (local.has(k)) return local.get(k); if (shared.has(k)) return shared.get(k); if (site.has(k)) return site.get(k); }
+  // 画像はカード番号（id）ごとに持つ（2026-11-15。同じ名前でも中身が違うカードが多いので）。
+  // 探す順：id（自分だけ → みんな → サイト）→ サイトの収録番号 → カード名（前の版で名前で入れた物。同じ名前のカードが1種類しかない時だけ）
+  let nameN = null;
+  const uniqName = n => { if (!nameN) { nameN = new Map(); CARDS.forEach(c => nameN.set(c.n, (nameN.get(c.n) || 0) + 1)); } return (nameN.get(n) || 0) <= 1; };
+  function which(c) {
+    if (!c) return null;
+    for (const [m, kind] of [[local, 'local'], [shared, 'shared'], [site, 'site']]) if (c.id && m.has(c.id)) return { kind, key: c.id, url: m.get(c.id) };
+    for (const k of c.no || []) if (site.has(k)) return { kind: 'site', key: k, url: site.get(k) };
+    if (uniqName(c.n)) for (const [m, kind] of [[local, 'local'], [shared, 'shared'], [site, 'site']]) if (m.has(c.n)) return { kind, key: c.n, url: m.get(c.n), byName: true };
     return null;
   }
+  const url = c => (which(c) || {}).url || null;
+  // 同じ名前のカードが何種類もあるのに、前の版で名前で入れた画像（今は出していない）
+  const oldByName = c => !c || uniqName(c.n) ? null : local.has(c.n) ? { kind: 'local', key: c.n, url: local.get(c.n) } : shared.has(c.n) ? { kind: 'shared', key: c.n, url: shared.get(c.n) } : null;
   async function put(key, blob) {
     if (!db) throw new Error('この環境では画像を保存できません');
     await idbPut('img', key, blob);
@@ -411,9 +423,11 @@ const Images = (() => {
     await idbDel('img', key);
     setUrl(local, key, null);
   }
-  const hasLocal = c => local.has(c.n);
-  const hasShared = c => shared.has(c.n);
-  return { init, url, put, del, hasLocal, hasShared, putShared, sync, get shareOn() { return on; } };
+  const hasLocal = c => !!c && local.has(c.id);
+  const hasShared = c => !!c && shared.has(c.id);
+  const localKeys = () => [...local.keys()];
+  const localUrl = k => local.get(k);
+  return { init, url, which, oldByName, put, del, hasLocal, hasShared, localKeys, localUrl, putShared, sync, get shareOn() { return on; } };
 })();
 
 // 長辺 max px に縮めて JPEG に（容量節約）。みんなの画像は 1文書1MB までなので小さめにする
@@ -678,6 +692,7 @@ function openSheet(id) {
   sheetId = id;
   const n = cur().cards[id] || 0;
   const alt = altHtml(c);
+  const wh = Images.which(c), old = !wh ? Images.oldByName(c) : null;
   $('sheetIn').innerHTML = `
     ${cardFace(c)}
     <div class="sheet-info">
@@ -695,12 +710,14 @@ function openSheet(id) {
         ${Images.hasLocal(c) ? `<button id="imgDel" class="ghost">${Images.shareOn ? '自分だけの画像を外す' : '画像を外す'}</button>` : ''}
         ${Images.shareOn && Images.hasLocal(c) ? '<button id="imgUp" class="ghost" title="このブラウザだけの画像を、みんなの画像にします">みんなに出す</button>' : ''}
         ${Images.hasShared(c) ? '<button id="imgDelS" class="ghost">みんなの画像を外す</button>' : ''}
+        ${wh && wh.byName && wh.kind !== 'site' ? '<button id="imgPin" class="ghost" title="前の版で名前で入れた画像です。このカード番号の画像として入れ直します">この番号の画像にする</button><button id="imgDelN" class="ghost" title="前の版で名前で入れた画像を外します">名前で入れた画像を外す</button>' : ''}
         <button id="sheetClose" class="primary" style="margin-left:auto">閉じる</button>
       </div>
+      ${old ? `<div class="oldimg"><img src="${esc(old.url)}" alt=""><div><b>同じ名前のカードに共通で入っていた画像があります</b>（前の版で名前で入れた物）。同じ名前でも中身が違うカードがあるので、今はどのカードにも出していません。このカードの絵なら「このカードに使う」を押してください。<br><button id="imgOld" class="mini">このカード（${esc(c.no.join(', '))}）に使う</button></div></div>` : ''}
       <div class="note">${Images.shareOn
-        ? '入れた画像は<b>みんなの画像</b>になり、サイトを開いた全員に見えます（同じ名前のカード共通。数分で届きます）。自分のブラウザだけの画像がある時はそちらが先に出ます。'
-        : '画像はこのブラウザにだけ保存され、同じ名前のカードに共通で使われます。'}サイトの画像を右クリック→「画像をコピー」してから、この画面で Ctrl+V（または「クリップボードから貼る」）でも入れられます。
-        ${Images.shareOn && Images.hasLocal(c) ? '<br><a href="#" id="imgUpAll">このブラウザだけの画像を全部みんなに出す</a>' : ''}</div>
+        ? '入れた画像は<b>みんなの画像</b>になり、サイトを開いた全員に見えます（このカード番号だけ。同じ名前の別のカードには出ません。数分で届きます）。自分のブラウザだけの画像がある時はそちらが先に出ます。'
+        : '画像はこのブラウザにだけ保存され、このカード番号だけに使われます。'}サイトの画像を右クリック→「画像をコピー」してから、この画面で Ctrl+V（または「クリップボードから貼る」）でも入れられます。
+        ${Images.shareOn && Images.localKeys().length ? '<br><a href="#" id="imgUpAll">このブラウザだけの画像を全部みんなに出す</a>' : ''}</div>
     </div>`;
   $('sheet').classList.add('on');
 }
@@ -719,42 +736,51 @@ $('sheet').onclick = async e => {
       toast('クリップボードに画像がありません（画像を右クリック→「画像をコピー」してから）');
     } catch (err) { toast('このブラウザでは読めませんでした。この画面で Ctrl+V を押して貼ってください'); }
   }
-  if (e.target.id === 'imgDel') { await Images.del(BY_ID.get(sheetId).n); renderAll(true); toast('画像を外しました'); }
+  const c = BY_ID.get(sheetId);
+  if (e.target.id === 'imgDel') { await Images.del(c.id); renderAll(true); toast('画像を外しました'); }
   if (e.target.id === 'imgDelS') {
-    try { await Images.putShared(BY_ID.get(sheetId).n, null); renderAll(true); toast('みんなの画像を外しました'); } catch (err) { toast(err.message); }
+    try { await Images.putShared(c.id, null); renderAll(true); toast('みんなの画像を外しました'); } catch (err) { toast(err.message); }
   }
   if (e.target.id === 'imgUp') {
-    const n = BY_ID.get(sheetId).n;
-    try { await Images.putShared(n, await shrink(await (await fetch(Images.url({ id: '', no: [], n }))).blob(), 600, 0.8)); await Images.del(n); renderAll(true); toast('みんなの画像にしました'); } catch (err) { toast(err.message); }
+    try { await Images.putShared(c.id, await shrink(await (await fetch(Images.localUrl(c.id))).blob(), 600, 0.8)); await Images.del(c.id); renderAll(true); toast('みんなの画像にしました'); } catch (err) { toast(err.message); }
+  }
+  // 名前で入っていた画像を、このカード番号の画像として入れ直す（名前の方は残す）
+  if (e.target.id === 'imgOld' || e.target.id === 'imgPin') {
+    const o = e.target.id === 'imgOld' ? Images.oldByName(c) : Images.which(c);
+    if (o) try { await setImage(await (await fetch(o.url)).blob()); } catch (err) { toast('画像を読めませんでした'); }
+  }
+  if (e.target.id === 'imgDelN') {
+    const o = Images.which(c); if (!o || !o.byName) return;
+    try { if (o.kind === 'local') await Images.del(o.key); else await Images.putShared(o.key, null); renderAll(true); toast('名前で入れた画像を外しました'); } catch (err) { toast(err.message); }
   }
   if (e.target.id === 'imgUpAll') { e.preventDefault(); upAllLocal(); }
 };
 async function setImage(f) {
   if (!f || !sheetId) return;
-  const n = BY_ID.get(sheetId).n;
+  const id = sheetId;   // 画像はカード番号（id）ごと
   if (Images.shareOn) {
     // みんなの画像に入れる。自分だけの画像が残っているとそちらが先に出るので外す
-    try { await Images.putShared(n, await shrink(f, 600, 0.8)); if (Images.hasLocal({ n })) await Images.del(n); renderAll(true); toast('みんなの画像にしました'); }
+    try { await Images.putShared(id, await shrink(f, 600, 0.8)); if (Images.hasLocal({ id })) await Images.del(id); renderAll(true); toast('みんなの画像にしました'); }
     catch (err) { toast(err.message || '画像を送れませんでした'); }
     return;
   }
-  try { await Images.put(n, await shrink(f)); renderAll(true); toast('画像を設定しました'); }
+  try { await Images.put(id, await shrink(f)); renderAll(true); toast('画像を設定しました'); }
   catch (err) { toast('画像を保存できませんでした'); }
 }
-// このブラウザだけの画像（カード名で入れた物）を全部みんなの画像に移す
+// このブラウザだけの画像を全部みんなの画像に移す（前の版で名前で入れた物は名前のまま）
 async function upAllLocal() {
-  const names = [...new Set(CARDS.map(c => c.n))].filter(n => Images.hasLocal({ n }));
-  if (!names.length) { toast('このブラウザだけの画像はありません'); return; }
-  if (!confirm(`このブラウザだけの画像 ${names.length}枚を、みんなの画像に出します。よろしいですか？`)) return;
+  const keys = Images.localKeys();
+  if (!keys.length) { toast('このブラウザだけの画像はありません'); return; }
+  if (!confirm(`このブラウザだけの画像 ${keys.length}枚を、みんなの画像に出します。よろしいですか？`)) return;
   let ok = 0;
-  for (const n of names) {
+  for (const k of keys) {
     try {
-      const b = await (await fetch(Images.url({ id: '', no: [], n }))).blob();
-      await Images.putShared(n, await shrink(b, 600, 0.8)); await Images.del(n); ok++;
-      toast(`みんなに出しています… ${ok}/${names.length}`);
-    } catch (err) { console.warn(n, err); }
+      const b = await (await fetch(Images.localUrl(k))).blob();
+      await Images.putShared(k, await shrink(b, 600, 0.8)); await Images.del(k); ok++;
+      toast(`みんなに出しています… ${ok}/${keys.length}`);
+    } catch (err) { console.warn(k, err); }
   }
-  renderAll(true); toast(`${ok}枚をみんなの画像にしました` + (ok < names.length ? `（${names.length - ok}枚は失敗）` : ''));
+  renderAll(true); toast(`${ok}枚をみんなの画像にしました` + (ok < keys.length ? `（${keys.length - ok}枚は失敗）` : ''));
 }
 window.addEventListener('gw-images', () => renderAll(true));
 $('imgFile').onchange = e => { const f = e.target.files[0]; e.target.value = ''; setImage(f); };
@@ -786,6 +812,6 @@ if (!CARDS.length) document.body.innerHTML = '<p style="padding:20px">cards.js �
 else { renderAll(); Images.init().then(() => renderAll()); }
 </script>
 <script src="lib/peerjs.min.js"></script>
-<script src="battle.js?v=20261114a"></script>
+<script src="battle.js?v=20261115a"></script>
 </body>
 </html>

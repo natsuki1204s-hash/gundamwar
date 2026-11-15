@@ -40,6 +40,45 @@ const fmtMod = d => d.map(v => (v >= 0 ? '+' : '') + v).join('/');
 const tmLabel = tm => (tm.d.some(v => v) ? fmtMod(tm.d) : '') + (tm.s || tm.m ? '※' : '');
 const tmTitle = tm => `一時修正${tm.d.some(v => v) ? ' ' + fmtMod(tm.d) : ''}${tm.m ? ' ※' + tm.m : tm.s ? ' ※' : ''}${tm.k ? '（ターン終了で消さない）' : '（ターン終了で消える）'}`;
 const UNIT_T = ['U', 'A'];   // 部隊戦闘力に数える種類（ユニット・ACE）
+// トークン（「ボルジャーノンコイン{UNIT、…、2/0/2}」のように効果で出るユニット・キャラ）。
+// 中身（def）は盤面の S.tk[id] に持ち、BY_ID にも足して普通のカードと同じに描く。場のカードは {u, id, tk:1, …}。
+// id は 'TK|呼び名|格/射/耐'。画像もこの id ごと（カード詳細と同じしくみ）。場を離れると消える
+const TK_COLORS = ['無', '白', '青', '緑', '黒', '赤', '茶', '紫'];
+const tkId = d => `TK|${d.n}|${d.st.join('/')}`;
+function cleanTok(d) {
+  if (!d) return null;
+  const str = (v, n) => String(v ?? '').trim().slice(0, n);
+  const list = (v, n) => (Array.isArray(v) ? v : String(v || '').split(/[\s、,]+/)).map(x => str(x, 20)).filter(Boolean).slice(0, n);
+  const n = str(d.n, 30); if (!n) return null;
+  const st = [0, 1, 2].map(i => str((d.st || [])[i], 4) || '0');
+  const t = d.t === 'CH' ? 'CH' : 'U', c = TK_COLORS.includes(d.c) ? d.c : '無';
+  const nm = str(d.nm, 30);
+  const x = String(Array.isArray(d.x) ? d.x.join('\n') : d.x || '').split('\n').map(l => str(l, 200)).filter(Boolean).slice(0, 6);
+  const def = { n, t, c, k: [null, null, null], r: '', tok: true, nm, tr: list(d.tr, 8), tg: list(d.tg, 3).filter(g => ['宇宙', '地球'].includes(g)), st, x: (nm ? [`名称：${nm}`] : []).concat(x.filter(l => !/^名称：/.test(l))), no: ['トークン'], s: ['トークン'], m: 'トークン' };
+  if (!def.tr.length) delete def.tr;
+  def.id = tkId(def);
+  return def;
+}
+const regTokens = S => S && S.tk && Object.values(S.tk).forEach(d => BY_ID.set(d.id, d));
+// カードの文面から「〇〇コイン{UNIT、…、2/0/2}」を読む（ボタン一発で出せるように）
+function tokTemplates(x, src) {
+  const out = [], t = (x && x.x || []).join(' ');
+  for (const m of t.matchAll(/([^\s、。「」”"{}｛｝:：（）()]{0,16})[{｛](UNIT|CHARACTER\(UNIT\)|CHARACTER)、([^}｝]*)[}｝]/g)) {
+    const body = m[3], d = { t: m[2] === 'UNIT' ? 'U' : 'CH', tr: [], tg: [], x: [] };
+    const st = body.match(/([0-9XYZ*＊]+)\/([0-9XYZ*＊]+)\/([0-9XYZ*＊]+)\s*$/);
+    d.st = st ? st.slice(1, 4) : ['0', '0', '0'];
+    const g = body.match(/地形適性((?:「[^」]*」)+)/); if (g) d.tg = [...g[1].matchAll(/「([^」]*)」/g)].map(y => y[1]);
+    let rest = body.replace(/地形適性(?:「[^」]*」)+/, '').replace(/[0-9XYZ*＊]+\/[0-9XYZ*＊]+\/[0-9XYZ*＊]+\s*$/, '');
+    const nm = rest.match(/(?:カード)?名称[「:：]+([^」]*)」?/); if (nm) { d.nm = nm[1]; rest = rest.replace(nm[0], ''); }
+    const tr = rest.match(/「特徴[:：]([^」]*)」/); if (tr) { d.tr = tr[1].split(/[、,]/); rest = rest.replace(tr[0], ''); }
+    const q = [...rest.matchAll(/「([^」]*)」/g)].map(y => y[1]);
+    if (d.t === 'CH' && !tr) d.tr = q; else if (q.length) d.x = [q.map(y => `「${y}」`).join('')];
+    const pre = (m[1] || '').replace(/^(以後|敵軍配備エリアに|このカードの部隊に|部隊に)/, '');
+    d.n = /コイン$/.test(pre) ? pre : d.nm ? d.nm + 'コイン' : (src || 'トークン') + 'のコイン';
+    out.push(d);
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------
 //  通信
@@ -229,8 +268,8 @@ function apply(a, who) {
         return;
       }
       if (PILES.includes(a.zone)) {   // 捨て札置き場へは表向き・リロール状態で、セットしていたカードも一緒に
-        [card, ...subs].forEach(c => { c.r = false; c.f = false; c.v = false; c.vb = false; c.s = []; delete c.cn; delete c.tm; tz.push(c); });
-        log(`${nm}が『${cname(card)}』${subs.length ? `（セット${subs.length}枚ごと）` : ''}を${zoneLabel(a.seat, a.zone)}へ`);
+        [card, ...subs].forEach(c => { c.r = false; c.f = false; c.v = false; c.vb = false; c.s = []; delete c.cn; delete c.tm; if (!c.tk) tz.push(c); });   // トークンは場を離れると消える
+        log(`${nm}が『${cname(card)}』${subs.length ? `（セット${subs.length}枚ごと）` : ''}を${card.tk ? '取り除きました（トークンは場を離れると消えます）' : zoneLabel(a.seat, a.zone) + 'へ'}`);
       } else {
         card.s = subs; if (card.vb && !['deploy', 'G'].includes(a.zone)) card.vb = false; tz.push(card);
         log(`${nm}が『${cname(card)}』を${zoneLabel(a.seat, a.zone)}へ`);
@@ -240,13 +279,27 @@ function apply(a, who) {
     case 'leave': {   // 場から持ち主の手札・本国へ
       const f = findCard(S, a.u); if (!f) return;
       if (f.c.coin) { f.arr.splice(f.i, 1); log(`${nm}が『${f.c.coin}』${f.c.n}枚を取り除きました`); return; }
-      const all = [f.c, ...(f.c.s || [])];
+      const all = [f.c, ...(f.c.s || [])].filter(c => !c.tk);   // トークンは手札・本国へ行かず消える
       const owners = new Set(all.map(c => c.o));
       for (const o of owners) if (!canReach(o)) return `${S.seats[o].name || '持ち主'}がいないので動かせません`;
       f.arr.splice(f.i, 1);
       all.forEach(c => sendGain(c.o, { u: c.u, id: c.id }, a.to));
       const where = { hand: '手札', top: '本国の上', bottom: '本国の下' }[a.to];
+      if (f.c.tk) { log(`${nm}がトークン『${cname(f.c)}』を取り除きました${all.length ? `（セットしていた${all.length}枚は持ち主の${where}へ）` : ''}`); return; }
       log(`${nm}が『${SECRET.includes(f.zone) ? ZONES[f.zone] + 'のカード' : cname(f.c)}』${all.length > 1 ? `（セット${all.length - 1}枚ごと）` : ''}を持ち主の${where}へ`);
+      return;
+    }
+    case 'token': {   // トークン（効果で出るユニット・キャラ）を出す
+      const d = cleanTok(a.def); if (!d) return;
+      const seat = a.seat ?? who.seat, tz = S.seats[seat]?.z[a.zone]; if (!tz || PILES.includes(a.zone)) return;
+      (S.tk || (S.tk = {}))[d.id] = d; BY_ID.set(d.id, d);
+      const n = Math.max(1, Math.min(10, a.n | 0 || 1));
+      const cards = Array.from({ length: n }, () => ({ u: rid() + rid(), id: d.id, o: who.seat, r: !!a.r, f: false, s: [], tk: 1 }));
+      const t = a.onto && findCard(S, a.onto);
+      if (t && !t.c.coin) t.c.s.push(...cards);
+      else if (a.at > 0) tz.splice(Math.min(tz.length, a.at - 1), 0, ...cards);
+      else tz.push(...cards);
+      log(`${nm}が${t && !t.c.coin ? `『${cname(t.c)}』に` : zoneLabel(seat, a.zone) + 'に'}トークン『${d.n}』（${d.st.join('/')}）を${n}個出しました${a.at > 0 && !t ? `（${a.at}番目）` : ''}${a.r ? '（ロール状態）' : ''}`);
       return;
     }
     case 'coin': {    // カード（または場のコイン）の上のコインを増やす・減らす
@@ -407,6 +460,21 @@ function apply(a, who) {
       const j = a.to === 'top' ? L : a.to === 'bottom' ? 0 : Math.max(0, Math.min(L, f.i + (a.d | 0)));
       f.arr.splice(j, 0, c);
       log(`${nm}が${zoneLabel(f.seat, f.zone)}の並びを変えました`);
+      return;
+    }
+    case 'pmove': {     // 捨て山の何枚かをまとめて動かす（us：捨て山の上から順。to：dtop/dbottom＝捨て山の上/下、top/bottom＝本国の上/下）
+      const arr = seatObj.z.discard;
+      let got = a.n ? arr.slice(-Math.max(1, a.n | 0)).reverse() : (a.us || []).map(u => arr.find(c => c.u === u)).filter(Boolean);
+      if (!got.length) return '捨て山がありません';
+      if (['top', 'bottom'].includes(a.to)) for (const o of new Set(got.map(c => c.o))) if (!canReach(o)) return `${S.seats[o].name || '持ち主'}がいないので動かせません`;
+      got.forEach(c => arr.splice(arr.indexOf(c), 1));
+      const n = got.length;
+      if (a.to === 'dbottom') { arr.unshift(...got.slice().reverse()); log(`${nm}が${a.n ? `捨て山の上から${n}枚` : `見ていた${n}枚`}を捨て山の下へ送りました${a.n ? '' : '（好きな順で）'}`); return; }
+      if (a.to === 'dtop') { arr.push(...got.slice().reverse()); log(`${nm}が見ていた${n}枚を捨て山の上に好きな順で置きました`); return; }
+      if (seatObj.pk && seatObj.pk !== 'all') seatObj.pk = seatObj.pk.filter(u => !got.some(c => c.u === u));
+      if (a.to === 'top') got.slice().reverse().forEach(c => sendGain(c.o, { u: c.u, id: c.id }, 'top'));
+      else got.forEach(c => sendGain(c.o, { u: c.u, id: c.id }, 'bottom'));
+      log(`${nm}が捨て山の${a.n ? '上から' : '見ていた'}${n}枚を本国の${a.to === 'top' ? '上' : '下'}へ（この並びのまま）`);
       return;
     }
     case 'pshuffle': { const z = PILES.includes(a.zone) ? a.zone : 'discard'; shuffle(seatObj.z[z]); if (z === 'discard') seatObj.pk = null; log(`${nm}が${ZONES[z]}を切りました`); return; }
@@ -672,13 +740,13 @@ function forceOf(arr) {
 function slot(c, src, lead = false) {
   if (c.coin) return `<div class="slot ctok" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" data-coin="1" title="${esc(c.coin)} ${c.n}枚（カードに落とすと乗せます）"><div class="mc ctk"><span>${esc(c.coin.replace(/コイン$/, '') || 'コイン')}</span><b>×${c.n}</b></div></div>`;
   const known = c.id && BY_ID.get(c.id);
-  const subs = (c.s || []).map(x => `<div class="sub${x.r ? ' r' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(x.u)}" ${x.id ? `data-cid="${esc(x.id)}"` : ''}>${esc(x.f && !x.id ? '裏向き' : cname(x))}${Object.keys(x.cn || {}).length ? ` ●${Object.values(x.cn).reduce((a, b) => a + b, 0)}` : ''}${x.tm ? ` <span class="tms" title="${esc(tmTitle(x.tm))}">${esc(tmLabel(x.tm))}</span>` : ''}</div>`).join('');
+  const subs = (c.s || []).map(x => `<div class="sub${x.r ? ' r' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(x.u)}" ${x.id ? `data-cid="${esc(x.id)}"` : ''} title="セットしているカード。押すとこのカードだけ動かせます（手札・本国・捨て山など）">${esc(x.f && !x.id ? '裏向き' : cname(x))}${Object.keys(x.cn || {}).length ? ` ●${Object.values(x.cn).reduce((a, b) => a + b, 0)}` : ''}${x.tm ? ` <span class="tms" title="${esc(tmTitle(x.tm))}">${esc(tmLabel(x.tm))}</span>` : ''}</div>`).join('');
   const tot = !c.f ? groupStats(c) : null;
   const v = c.v && !c.f && known && known.alt;
   const tmc = hasTm(c) ? ' tm' : '';
   const tmb = c.tm ? `<div class="tmb" title="${esc(tmTitle(c.tm))}">${esc(tmLabel(c.tm))}</div>` : '';
   const vb = c.vb && !c.f && known;
-  return `<div class="slot${c.r ? ' r' : ''}${v ? ' v' : ''}${vb ? ' vb' : ''}${lead ? ' lead1' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" ${known ? `data-cid="${esc(c.id)}"` : ''}>${lead ? '<span class="leadtag">先頭</span>' : ''}${vb ? `<span class="vbtag" style="--cc:var(--c-${known.c})" title="ヴァリアブル：${known.c}の特殊G（国力${known.c}1）として扱います">G ${known.c}</span>` : ''}${(c.f && known) ? miniFace({}).replace('GW', '裏') : miniFace(c)}${coinBadges(c)}${tmb}${!subs && tot ? `<div class="gst ov${tmc}" title="コイン・一時修正込みの戦闘力">[${esc(tot.join(']['))}]</div>` : ''}${subs ? `<div class="subs">${tot ? `<div class="gst${tmc}" title="セットグループの合計（コイン・一時修正込み）">計[${esc(tot.join(']['))}]</div>` : ''}${subs}</div>` : ''}</div>`;
+  return `<div class="slot${c.r ? ' r' : ''}${v ? ' v' : ''}${vb ? ' vb' : ''}${lead ? ' lead1' : ''}${c.tk ? ' tok' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" ${known ? `data-cid="${esc(c.id)}"` : ''}>${lead ? '<span class="leadtag">先頭</span>' : ''}${c.tk ? '<span class="tktag" title="トークン（場を離れると消えます）">トークン</span>' : ''}${vb ? `<span class="vbtag" style="--cc:var(--c-${known.c})" title="ヴァリアブル：${known.c}の特殊G（国力${known.c}1）として扱います">G ${known.c}</span>` : ''}${(c.f && known) ? miniFace({}).replace('GW', '裏') : miniFace(c)}${coinBadges(c)}${tmb}${!subs && tot ? `<div class="gst ov${tmc}" title="コイン・一時修正込みの戦闘力">[${esc(tot.join(']['))}]</div>` : ''}${subs ? `<div class="subs">${tot ? `<div class="gst${tmc}" title="セットグループの合計（コイン・一時修正込み）">計[${esc(tot.join(']['))}]</div>` : ''}${subs}</div>` : ''}</div>`;
 }
 function zoneHtml(seat, z, cls = '') {
   const arr = VS.seats[seat].z[z];
@@ -690,7 +758,7 @@ function zoneHtml(seat, z, cls = '') {
   const bat = BATTLE.includes(z), fo = bat ? forceOf(arr) : null;
   const lead = bat && !fo ? '<div class="leadbox" title="戦闘エリアは左が先頭です（カードのメニューで前後を入れ替え）"><span>先頭</span></div>' : '';
   const force = fo ? `<b class="bforce${fo.unk ? ' unk' : ''}" title="部隊戦闘力＝先頭のユニットの格闘力＋2番目からのユニットの射撃力（コイン・一時修正込み）\n${esc(fo.note)}${fo.unk ? '\n数字でない所（*など）は0として数えています' : ''}">部隊戦闘力 ${fo.total}${fo.unk ? '＋？' : ''}</b>` : '';
-  const add = isPlayer() && seat === mySeat() && !['cmd', 'hangar'].includes(z) ? `<span class="zadd" data-coinzone="${z}" title="この置き場にコインを置きます（カードの上に乗せるのはカードのメニューか、コインをカードへドラッグ）">＋コイン</span>` : '';
+  const add = isPlayer() && seat === mySeat() && !['cmd', 'hangar'].includes(z) ? `<span class="zadd" data-coinzone="${z}" title="この置き場にコインやトークン（ボルジャーノンコインなど、効果で出るユニット）を置きます（カードの上に乗せるのはカードのメニューか、コインをカードへドラッグ）">＋コイン</span>` : '';
   return `<div class="zone ${cls}${bat ? ' bat' : ''}" data-seat="${seat}" data-zone="${z}"><div class="zl">${force}${ZONES[z]}${arr.length ? `（${arr.length}）` : ''}${add}</div><div class="zc">${lead}${arr.map(c => slot(c, 'pub', !!fo && c.u === fo.lead)).join('')}</div></div>`;
 }
 function deckPile(seat) {
@@ -833,6 +901,7 @@ function shownRow(seat) {
 }
 function render() {
   if (!B.S) { renderLobby(); return; }
+  regTokens(B.S);
   VS = B.role === 'host' ? viewFor(0) : B.S;
   const me = mySeat(), op = 1 - me, S = VS;
   const st = root.querySelector('.blog')?.scrollTop, atBottom = (() => { const l = root.querySelector('.blog'); return !l || l.scrollTop + l.clientHeight >= l.scrollHeight - 4; })();
@@ -1001,8 +1070,8 @@ function menu(x, y, title, items) {
 document.addEventListener('mousedown', e => { if (!ctx.contains(e.target)) ctx.classList.remove('on'); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') ctx.classList.remove('on'); });
 
-function coinPick(x, y, title, fn) {
-  menu(x, y, title, [...COINS.map(n => [n, () => fn(n)]), ['ほかの名前…', () => { const n = (prompt('コインの名前（例：暴走コイン）', '') || '').trim(); if (n) fn(/コイン$/.test(n) ? n : n + 'コイン'); }]]);
+function coinPick(x, y, title, fn, tok) {
+  menu(x, y, title, [...tok ? [['トークン（ユニット・キャラ）を出す…', tok], '-'] : [], ...COINS.map(n => [n, () => fn(n)]), ['ほかの名前…', () => { const n = (prompt('コインの名前（例：暴走コイン）', '') || '').trim(); if (n) fn(/コイン$/.test(n) ? n : n + 'コイン'); }]]);
 }
 function coinMenu(f, x, y) {
   const c = f.c, u = c.u;
@@ -1032,6 +1101,11 @@ function pubMenu(u, x, y) {
     ['持ち主の本国の下へ', () => act({ t: 'leave', u, to: 'bottom' })]
   ];
   if (f.parent) items.unshift([`セットを外す（${ZONES[f.zone]}に置く）`, () => act({ t: 'move', u, seat: f.seat, zone: f.zone })]);
+  // セットしているカードを1枚ずつ動かす（そのカードだけのメニューを開く）
+  if (!f.parent && (c.s || []).length) items.push('-', ...c.s.map(sc => [`セット中の『${sc.f && !sc.id ? '裏向きのカード' : cname(sc)}』だけ動かす…`, () => pubMenu(sc.u, x, y)]));
+  // 文面にトークン（〇〇コイン{UNIT、…}）があるカード
+  const tts = !c.f ? tokTemplates(BY_ID.get(c.id), cname(c)) : [];
+  if (tts.length && isPlayer()) items.push('-', ...tts.map(d => [`トークン『${d.n}』（${d.st.join('/')}）を出す…`, () => openTok({ def: d, zone: BATTLE.includes(f.zone) ? f.zone : 'deploy' })]));
   if (!f.parent && f.arr.length > 1 && (BATTLE.includes(f.zone) || f.zone === 'deploy')) {
     const order = [];
     if (f.i > 0) order.push([`左へ（前へ）${BATTLE.includes(f.zone) && f.i === 1 ? '：先頭にする' : ''}`, () => act({ t: 'zorder', u, d: -1 })]);
@@ -1104,6 +1178,97 @@ function openTm(u) {
   show(); tmDlg.showModal();
 }
 
+// トークンの窓：呼び名・名称・特徴・地形・格闘/射撃/耐久・テキスト・画像を決めて出す
+const tkDlg = document.createElement('dialog'); tkDlg.id = 'tkDlg'; document.body.appendChild(tkDlg);
+const TK_STORE = 'tokens';   // 前に出したトークン（このブラウザ）
+const TK_PRESET = [{ n: 'ボルジャーノンコイン', nm: 'ボルジャーノン', t: 'U', c: '無', tr: ['ボルジャーノン系'], tg: ['宇宙', '地球'], st: ['2', '0', '2'], x: [] }];
+function tokPresets() {
+  const seen = new Set(), out = [];
+  const add = d => { const c = cleanTok(d); if (c && !seen.has(c.id)) { seen.add(c.id); out.push(c); } };
+  // 場・コマンド・ハンガーにあるカードの文面から
+  if (VS) VS.seats.forEach(st => Object.entries(st.z).forEach(([z, arr]) => { if (z !== 'discard') arr.forEach(c => [c, ...(c.s || [])].forEach(x => !x.tk && x.id && tokTemplates(BY_ID.get(x.id), cname(x)).forEach(add))); }));
+  Object.values((VS && VS.tk) || {}).forEach(add);
+  (store.get(TK_STORE, []) || []).forEach(add);
+  TK_PRESET.forEach(add);
+  return out.slice(0, 24);
+}
+function openTok(o = {}) {
+  if (!isPlayer()) return;
+  let d = cleanTok(o.def || TK_PRESET[0]), blob = null;
+  const zones = ['deploy', ...BATTLE];
+  const pre = tokPresets();
+  tkDlg.innerHTML = `<h3>トークン（コイン）を出す</h3>
+    <p class="note">効果で出るユニット（例：機械人形部隊のボルジャーノンコイン {UNIT、「名称:ボルジャーノン」、「特徴:ボルジャーノン系」、地形適性「宇宙」「地球」、2/0/2}）を、カードと同じように場に出します。ロール・セット・コイン・一時修正・部隊戦闘力も普通のカードと同じです。場を離れる（捨て山・手札などへ動かす）と消えます。</p>
+    ${pre.length ? `<div class="tkpre"><span class="note">選ぶ：</span>${pre.map((p, i) => `<button class="mini" data-pre="${i}" title="${esc(p.x.join(' '))}">${esc(p.n)} ${esc(p.st.join('/'))}</button>`).join('')}</div>` : ''}
+    <div class="tkrow"><label>文面から読む<input id="tkTxt" placeholder="〇〇コイン{UNIT、「名称:〇〇」、地形適性「宇宙」「地球」、2/0/2} を貼る"></label><button id="tkRead" class="mini">読む</button></div>
+    <div class="tkform">
+      <div class="tkimg" id="tkImg" title="この画面で Ctrl+V でも画像を貼れます"></div>
+      <div class="tkf">
+        <label>呼び名<input id="tkN" maxlength="30"></label>
+        <label>名称<input id="tkNm" maxlength="30" placeholder="（なければ空）"></label>
+        <label>種類<select id="tkT"><option value="U">ユニット</option><option value="CH">キャラクター</option></select></label>
+        <label>色<select id="tkC">${TK_COLORS.map(c => `<option>${c}</option>`).join('')}</select></label>
+        <label>特徴<input id="tkTr" maxlength="60" placeholder="ボルジャーノン系（空白か、で区切る）"></label>
+        <div class="tkchk">地形適性 <label><input type="checkbox" id="tkS">宇宙</label><label><input type="checkbox" id="tkE">地球</label></div>
+        <div class="tkchk">格闘 <input id="tk0" class="n" maxlength="4"> 射撃 <input id="tk1" class="n" maxlength="4"> 耐久 <input id="tk2" class="n" maxlength="4"></div>
+        <label>テキスト<textarea id="tkX" rows="2" maxlength="400" placeholder="（あれば。1行ずつ）"></textarea></label>
+        <div class="tkchk"><button id="tkPick" class="mini">画像を選ぶ</button><button id="tkPaste" class="mini">クリップボードから貼る</button><span class="note" id="tkImgNote"></span></div>
+      </div>
+    </div>
+    <div class="tkchk">出す所 <select id="tkZ">${zones.map(z => `<option value="${z}">${ZONES[z]}</option>`).join('')}</select>
+      位置 <input id="tkAt" class="n" placeholder="後ろ" title="左から何番目に入れるか（空なら一番後ろ。戦闘エリアは左が先頭）">番目
+      <input id="tkCnt" class="n" value="1">個　<label><input type="checkbox" id="tkR">ロール状態で</label></div>
+    <div class="row"><button id="tkNo" class="ghost">やめる</button><button id="tkOk" class="primary">出す</button></div>
+    <input type="file" id="tkFile" accept="image/*" hidden>`;
+  const q = sel => tkDlg.querySelector(sel);
+  const fill = x => {
+    q('#tkN').value = x.n; q('#tkNm').value = x.nm || ''; q('#tkT').value = x.t; q('#tkC').value = x.c;
+    q('#tkTr').value = (x.tr || []).join(' '); q('#tkS').checked = (x.tg || []).includes('宇宙'); q('#tkE').checked = (x.tg || []).includes('地球');
+    x.st.forEach((v, i) => q('#tk' + i).value = v); q('#tkX').value = (x.x || []).filter(l => !/^名称：/.test(l)).join('\n');
+    blob = null; showImg();
+  };
+  const read = () => cleanTok({ n: q('#tkN').value, nm: q('#tkNm').value, t: q('#tkT').value, c: q('#tkC').value, tr: q('#tkTr').value,
+    tg: [q('#tkS').checked && '宇宙', q('#tkE').checked && '地球'].filter(Boolean), st: [0, 1, 2].map(i => q('#tk' + i).value), x: q('#tkX').value });
+  const showImg = () => {
+    const cur = read(), u = blob ? URL.createObjectURL(blob) : cur && Images.url(cur);
+    q('#tkImg').innerHTML = u ? `<img src="${esc(u)}" alt="">` : '<span>画像なし</span>';
+    q('#tkImgNote').textContent = blob ? '出す時にこの画像を入れます' + (Images.shareOn ? '（みんなの画像）' : '') : u ? 'このトークンの画像があります' : '';
+  };
+  fill(d);
+  q('#tkZ').value = zones.includes(o.zone) ? o.zone : 'deploy';
+  tkDlg.oninput = e => { if (['tkN', 'tk0', 'tk1', 'tk2'].includes(e.target.id) && !blob) showImg(); };
+  const setBlob = b => { if (b) { blob = b; showImg(); } };
+  q('#tkFile').onchange = e => { setBlob(e.target.files[0]); e.target.value = ''; };
+  tkDlg.onpaste = e => {
+    const it = [...(e.clipboardData?.items || [])].find(i => i.kind === 'file' && i.type.startsWith('image/'));
+    if (it) { e.preventDefault(); setBlob(it.getAsFile()); }
+  };
+  tkDlg.onclick = async e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.pre) { fill(pre[+b.dataset.pre]); return; }
+    if (b.id === 'tkRead') { const t = tokTemplates({ x: [q('#tkTxt').value] }); if (t.length) fill(cleanTok(t[0])); else toast('{UNIT、…、2/0/2} の形が見つかりませんでした'); return; }
+    if (b.id === 'tkPick') { q('#tkFile').click(); return; }
+    if (b.id === 'tkPaste') {
+      try { for (const it of await navigator.clipboard.read()) { const ty = it.types.find(t => t.startsWith('image/')); if (ty) { setBlob(await it.getType(ty)); return; } } toast('クリップボードに画像がありません'); }
+      catch (err) { toast('このブラウザでは読めませんでした。この画面で Ctrl+V を押して貼ってください'); }
+      return;
+    }
+    if (b.id === 'tkNo') { tkDlg.close(); return; }
+    if (b.id === 'tkOk') {
+      const def = read(); if (!def) { toast('呼び名を入れてください'); return; }
+      tkDlg.close();
+      act({ t: 'token', def, zone: q('#tkZ').value, n: +q('#tkCnt').value || 1, at: +q('#tkAt').value || 0, r: q('#tkR').checked, onto: o.onto });
+      const list = (store.get(TK_STORE, []) || []).filter(x => x && tkId(cleanTok(x) || { n: '', st: [] }) !== def.id);
+      store.set(TK_STORE, [def, ...list].slice(0, 20));
+      if (blob) try {   // 画像はトークンの id ごと（カード詳細と同じ置き場）
+        if (Images.shareOn) await Images.putShared(def.id, await shrink(blob, 600, 0.8)); else await Images.put(def.id, await shrink(blob));
+        render(); toast('トークンの画像を入れました');
+      } catch (err) { toast(err.message || '画像を入れられませんでした'); }
+    }
+  };
+  tkDlg.showModal();
+}
+
 // 本国・捨て札置き場の一覧
 const dlg = document.createElement('dialog'); dlg.id = 'pileDlg'; document.body.appendChild(dlg);
 function openList(title, note, cards, onCard, extra = '', under = null, onBtn = null, idx = i => i + 1) {
@@ -1136,11 +1301,17 @@ function openPile(seat, z) {
     const cards = arr.filter(c => c.id), hidden = arr.length - cards.length;
     const under = c => { const i = arr.indexOf(c); return `<div class="lk"><button data-b="down" data-u="${esc(c.u)}" ${i ? '' : 'disabled'} title="1枚下へ">◀</button><button data-b="hand" data-u="${esc(c.u)}">手札へ</button><button data-b="up" data-u="${esc(c.u)}" ${i < arr.length - 1 ? '' : 'disabled'} title="1枚上へ">▶</button></div>`; };
     openList(`${zoneLabel(seat, z)}（${arr.length}枚）を見ています`,
-      `中身はあなたにだけ見えています（相手と観戦の人には見えません）。右が一番上です。◀ ▶ で並べ替え、カードを押すと手札や場へ動かせます。${hidden ? `この下にまだ${hidden}枚あります（見ていません）。` : ''}閉じると見るのをやめます。`,
+      `中身はあなたにだけ見えています（相手と観戦の人には見えません）。右が一番上です。◀ ▶ で並べ替え、カードを押すと手札や場へ動かせます。残りは下のボタンでまとめて捨て山の下などへ送れます。${hidden ? `この下にまだ${hidden}枚あります（見ていません）。` : ''}閉じると見るのをやめます。`,
       cards, (u, x, y) => discardCardMenu(u, x, y),
-      '<button id="pShufD" style="margin-right:auto">切ってから閉じる</button>', under,
+      `<div class="pbulk"><span class="note">見ている${cards.length}枚を今の並びのまま：</span><button id="pDBot" title="サラサ再臨・月のマウンテンサイクルなどの「残りを捨て山の下に戻す」">捨て山の下へ</button><button id="pDTop" title="上に戻す（並べ替えた順で）">捨て山の上へ</button><button id="pHTop">本国の上へ</button><button id="pHBot">本国の下へ</button></div><button id="pShufD" style="margin-right:auto">切ってから閉じる</button>`, under,
       (b, u) => b === 'hand' ? act({ t: 'leave', u, to: 'hand' }) : act({ t: 'preorder', u, d: b === 'up' ? 1 : -1 }),
-      i => `上から${cards.length - i}`);
+      i => `上から${arr.length - arr.indexOf(cards[i])}`);
+    // 見ているカードをまとめて（今の並びのまま。us は捨て山の上から順）
+    const us = () => cards.slice().reverse().map(c => c.u);
+    dlg.querySelector('#pDBot').onclick = () => act({ t: 'pmove', us: us(), to: 'dbottom' });
+    dlg.querySelector('#pDTop').onclick = () => act({ t: 'pmove', us: us(), to: 'dtop' });
+    dlg.querySelector('#pHTop').onclick = () => act({ t: 'pmove', us: us(), to: 'top' });
+    dlg.querySelector('#pHBot').onclick = () => act({ t: 'pmove', us: us(), to: 'bottom' });
     dlg.querySelector('#pShufD').onclick = () => { act({ t: 'pshuffle', zone: 'discard' }); dlg.close(); };
     return;
   }
@@ -1163,6 +1334,7 @@ function discardPileMenu(x, y) {
     [`${n}回復（上から${n}枚を本国の上へ）`, () => act({ t: 'precover', n, heal: true })],
     [`上から${n}枚を本国の上へ戻す`, () => act({ t: 'precover', n, to: 'top' })],
     [`上から${n}枚を本国の下へ戻す`, () => act({ t: 'precover', n, to: 'bottom' })],
+    [`上から${n}枚を捨て山の下へ送る（見ないで）`, () => act({ t: 'pmove', n, to: 'dbottom' })],
     '-',
     ['上の1枚を見る', () => look(1)],
     ...(n > 1 ? [[`上から${n}枚を見る`, () => look(n)]] : []),
@@ -1284,7 +1456,7 @@ root.addEventListener('click', e => {
   if (tog) { const st = +tog.dataset.gtog; gOpen.has(st) ? gOpen.delete(st) : gOpen.add(st); render(); return; }
   if (!isPlayer()) return;
   const cz = e.target.closest('[data-coinzone]');
-  if (cz) { const z = cz.dataset.coinzone; coinPick(e.clientX, e.clientY, `${ZONES[z]}に置くコイン`, n => act({ t: 'coinPut', zone: z, name: n, n: 1 })); return; }
+  if (cz) { const z = cz.dataset.coinzone; coinPick(e.clientX, e.clientY, `${ZONES[z]}に置くコイン`, n => act({ t: 'coinPut', zone: z, name: n, n: 1 }), () => openTok({ zone: z })); return; }
   const t = e.target.closest('[data-u]'); if (!t) return;
   if (t.dataset.gb) { gbMenu(+t.dataset.seat, t.dataset.gb, e.clientX, e.clientY); return; }
   if (t.dataset.src === 'shown') {
