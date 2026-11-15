@@ -859,7 +859,7 @@ function gbMenu(seat, col, x, y) {
     ...dn ? [['1枚リロール', () => act({ t: 'roll', u: dn.u })]] : [], '-',
     ['1枚を動かす…', () => pubMenu((up || cs[cs.length - 1]).u, x, y)],
     ['束を広げる', () => { gOpen.add(seat); render(); }]
-  ]);
+  ], { cid: 'BASIC|' + col });;
 }
 function seatStrip(seat, me) {
   const s = VS.seats[seat];
@@ -1036,21 +1036,34 @@ function wire() {
   $('bChatIn').onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) sendChat(); };
 }
 // 右の大きい表示。場のセットグループに乗せた時は、グループの全部と合計を出す
-function showPrev(cid, u) {
-  const el = $('bPrev'); if (!el) return;
+function prevHtml(cid, u) {
   const f = u && VS && findCard(VS, u), g = f && (f.parent || f.c);
   if (g && (g.s || []).length) {
     const list = [g, ...g.s].filter(x => x.id && BY_ID.has(x.id)), tot = g.f ? null : groupStats(g);
-    if (list.length) {
-      B.prev = { cid, u };
-      el.innerHTML = `<div class="grp"><div class="gh">セットグループ ${g.s.length + 1}枚${tot ? `　合計 <b>[${esc(tot.join(']['))}]</b>` : ''}</div>${list.map(x => cardFace(BY_ID.get(x.id), { v: x === g && g.v && !g.f })).join('')}</div>`;
-      return;
-    }
+    if (list.length) return `<div class="grp"><div class="gh">セットグループ ${g.s.length + 1}枚${tot ? `　合計 <b>[${esc(tot.join(']['))}]</b>` : ''}</div>${list.map(x => cardFace(BY_ID.get(x.id), { v: x === g && g.v && !g.f })).join('')}</div>`;
   }
-  const c = BY_ID.get(cid); if (!c) return;
+  const c = BY_ID.get(cid); if (!c) return null;
   const tm = f && f.c.tm, st = f && !f.c.f && groupStats(f.c);
-  B.prev = { cid, u }; el.innerHTML = (tm || st ? `<div class="grp"><div class="gh">${tm ? `<b class="tmt">${esc(tmTitle(tm))}</b>　` : ''}${st ? `今の数字 <b>[${esc(st.join(']['))}]</b>` : ''}</div>` : '') + cardFace(c, { v: !!(f && f.c.v && !f.c.f) }) + (tm || st ? '</div>' : '');
+  return (tm || st ? `<div class="grp"><div class="gh">${tm ? `<b class="tmt">${esc(tmTitle(tm))}</b>　` : ''}${st ? `今の数字 <b>[${esc(st.join(']['))}]</b>` : ''}</div>` : '') + cardFace(c, { v: !!(f && f.c.v && !f.c.f) }) + (tm || st ? '</div>' : '');
 }
+function showPrev(cid, u) {
+  const el = $('bPrev'); if (!el) return;
+  const h = prevHtml(cid, u); if (h == null) return;
+  B.prev = { cid, u }; el.innerHTML = h;
+}
+// 「詳しく見る」：画面いっぱいに大きく出す。どこかを押すか Esc で戻る
+const zoomEl = document.createElement('div'); zoomEl.className = 'bzoom';
+function zoomCard(cid, u) {
+  const h = prevHtml(cid, u); if (h == null) return;
+  const host = document.querySelector('dialog[open]') || document.body; if (zoomEl.parentNode !== host) host.appendChild(zoomEl);
+  zoomEl.innerHTML = `<div class="zin">${h}</div><div class="zhint">押すか Esc で戻ります</div>`;
+  zoomEl.classList.add('on');
+  const zin = zoomEl.firstChild, w = zin.offsetWidth, hh = zin.offsetHeight;
+  zin.style.zoom = Math.max(1, Math.min((innerWidth * .96) / w, (innerHeight * .92) / hh)).toFixed(3);
+}
+function zoomClose() { zoomEl.classList.remove('on'); zoomEl.innerHTML = ''; }
+zoomEl.onclick = zoomClose;
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && zoomEl.classList.contains('on')) { e.preventDefault(); e.stopPropagation(); zoomClose(); } }, true);
 root.addEventListener('mouseover', e => {
   const t = e.target.closest('[data-u],[data-cid]'); if (!t) return;
   if (t.dataset.src === 'pub' && t.dataset.u) showPrev(t.dataset.cid, t.dataset.u);
@@ -1059,7 +1072,8 @@ root.addEventListener('mouseover', e => {
 
 // クリックメニュー
 const ctx = document.createElement('div'); ctx.id = 'bctx'; document.body.appendChild(ctx);
-function menu(x, y, title, items) {
+function menu(x, y, title, items, zoom) {
+  if (zoom && zoom.cid && BY_ID.has(zoom.cid)) items = [['詳しく見る', () => zoomCard(zoom.cid, zoom.u)], ...items.length ? ['-'] : [], ...items];
   const host = document.querySelector('dialog[open]') || document.body; if (ctx.parentNode !== host) host.appendChild(ctx);
   ctx.innerHTML = `<div class="hd">${esc(title)}</div>` + items.map((it, i) => it === '-' ? '<hr>' : `<button data-i="${i}">${esc(it[0])}</button>`).join('');
   ctx.classList.add('on');
@@ -1117,7 +1131,7 @@ function pubMenu(u, x, y) {
   items.push('-', ...coinItems);
   items.push('-', [`一時修正（+1/+0/-1・※）…${c.tm ? `　今：${tmLabel(c.tm)}` : ''}`, () => openTm(u)]);
   if (c.tm) items.push(['一時修正を消す', () => act({ t: 'tmod', u })]);
-  menu(x, y, cname(c) + (mine ? '' : `（${B.S.seats[owner].name}のカード）`), items);
+  menu(x, y, cname(c) + (mine ? '' : `（${B.S.seats[owner].name}のカード）`), items, { cid: c.id, u });
 }
 function handMenu(u, x, y) {
   const c = B.priv.hand.find(c => c.u === u); if (!c) return;
@@ -1133,7 +1147,7 @@ function handMenu(u, x, y) {
     ...['discard', 'junk', 'removed'].map(z => [`${ZONES[z]}へ`, () => playFromHand(u, z)]), '-',
     ['本国の上に戻す', () => { B.priv.deck.unshift(takeFromHand(u)); savePriv(); render(); act({ t: 'note', msg: '手札を1枚本国の上に戻しました' }); }],
     ['本国の下に戻す', () => { B.priv.deck.push(takeFromHand(u)); savePriv(); render(); act({ t: 'note', msg: '手札を1枚本国の下に戻しました' }); }]
-  ]);
+  ], { cid: c.id, u });
 }
 function deckCardMenu(u, x, y, after) {
   const c = B.priv.deck.find(c => c.u === u); if (!c) return;
@@ -1143,7 +1157,7 @@ function deckCardMenu(u, x, y, after) {
     ...['deploy', 'G', 'hangar', 'discard', 'junk', 'removed'].map(z => [`${ZONES[z]}へ出す`, () => { playFromDeck(u, z); after(); }]), '-',
     ['一番上へ', () => { B.priv.deck.unshift(takeFromDeck(u)); done(); }],
     ['一番下へ', () => { B.priv.deck.push(takeFromDeck(u)); done(); act({ t: 'note', msg: '本国の1枚を一番下にしました' }); }]
-  ]);
+  ], { cid: c.id, u });
 }
 
 // 一時修正の窓
@@ -1358,7 +1372,7 @@ function discardCardMenu(u, x, y) {
     '-',
     ['捨て山の一番上へ', () => act({ t: 'preorder', u, to: 'top' })],
     ['捨て山の一番下へ', () => act({ t: 'preorder', u, to: 'bottom' })]
-  ]);
+  ], { cid: c.id, u });
 }
 
 // 最初の手札の枚数：1回目の引き直しまでは6枚、その後は1枚ずつ減る（m＝引き直した回数）
@@ -1410,7 +1424,7 @@ function lookMenu(u, x, y) {
     ...['deploy', 'G', 'hangar', 'junk', 'discard', 'removed'].map(z => [`${ZONES[z]}へ出す`, () => { playFromLook(u, z); after(); }]), '-',
     ['これだけ本国の上へ', () => { B.priv.deck.unshift(takeFromLook(u)); savePriv(); act({ t: 'note', msg: '見ているカードを1枚本国の上に置きました' }); after(); }],
     ['これだけ本国の下へ', () => { B.priv.deck.push(takeFromLook(u)); savePriv(); act({ t: 'note', msg: '見ているカードを1枚本国の下に置きました' }); after(); }]
-  ]);
+  ], { cid: c.id, u });
 }
 
 // 公開されたカード（手札の公開など）を、公開した本人以外に出す
@@ -1454,7 +1468,11 @@ root.addEventListener('click', e => {
   }
   const tog = e.target.closest('[data-gtog]');
   if (tog) { const st = +tog.dataset.gtog; gOpen.has(st) ? gOpen.delete(st) : gOpen.add(st); render(); return; }
-  if (!isPlayer()) return;
+  if (!isPlayer()) {
+    const v = e.target.closest('[data-cid]');
+    if (v) menu(e.clientX, e.clientY, cname({ id: v.dataset.cid }), [], { cid: v.dataset.cid, u: v.dataset.src === 'pub' ? v.dataset.u : undefined });
+    return;
+  }
   const cz = e.target.closest('[data-coinzone]');
   if (cz) { const z = cz.dataset.coinzone; coinPick(e.clientX, e.clientY, `${ZONES[z]}に置くコイン`, n => act({ t: 'coinPut', zone: z, name: n, n: 1 }), () => openTok({ zone: z })); return; }
   const t = e.target.closest('[data-u]'); if (!t) return;
@@ -1464,7 +1482,7 @@ root.addEventListener('click', e => {
     const sh = VS.seats[seat].sh, on = sh && sh.pt === t.dataset.u;
     menu(e.clientX, e.clientY, cname({ id: t.dataset.cid }) + `（${VS.seats[seat].name}の手札）`, [
       [on ? '指定を外す' : 'このカードを指定する（ハンデスなど）', () => act({ t: 'point', seat, u: t.dataset.u })]
-    ]);
+    ], { cid: t.dataset.cid });
     return;
   }
   if (t.dataset.src === 'hand') handMenu(t.dataset.u, e.clientX, e.clientY);
