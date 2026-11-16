@@ -1507,6 +1507,13 @@ function checkReveal(S) {
 // 盤面のクリック
 root.addEventListener('click', e => {
   if (!B.S || ctx.contains(e.target)) return;
+  // カードの左上（「詳細」の印）を押すと、メニューを出さずに「詳しく見る」。右の大きい表示を押しても同じ
+  const mc = e.target.closest('.slot[data-cid] > .mc:not(.back)');
+  if (mc) {
+    const r = mc.getBoundingClientRect(), sl = mc.parentNode;
+    if (e.clientX - r.left < r.width * .5 && e.clientY - r.top < r.height * .25 && !sl.classList.contains('r')) { zoomCard(sl.dataset.cid, sl.dataset.src === 'pub' ? sl.dataset.u : undefined); return; }
+  }
+  if (e.target.closest('#bPrev') && B.prev) { zoomCard(B.prev.cid, B.prev.u); return; }
   const stg = e.target.closest('[data-shtog]');
   if (stg) { const k = stg.dataset.shtog; shMin[k] = !shMin[k]; render(); return; }
   const ph = e.target.closest('[data-ph]');
