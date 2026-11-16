@@ -371,3 +371,22 @@ body:has(#battle.on) #toast{bottom:auto;top:56px}
 .bshown:not(.big) .shn{font-size:1.15em}
 .bfield.bg-ring .zen{display:none}
 .bfield.bg-ring>.zone>.zl .znm{padding:1px 6px 1px 4px}
+
+/* ===== 貯めG：コインの個数+1の国力（2026-11-16）===== */
+.gchip .gfx{color:#ffe08a;font-weight:700;margin-left:2px}
+.gb .gtame{display:flex;align-items:baseline;gap:2px;font-family:"Chakra Petch",sans-serif;font-size:10px;font-weight:700;color:#2a1c00;background:radial-gradient(circle at 35% 30%,#ffe9a8,#d9a520 70%);border-radius:8px;padding:0 4px;margin-top:2px}
+.gb .gtame b{font-size:13px;color:#fff;text-shadow:0 0 2px #000,0 0 2px #000}
+
+/* ===== 扇状の手札（手に持っている形、2026-11-16）===== */
+.bhand{position:relative;z-index:30}
+.bhand>.zone.hz{overflow:visible}
+.zone.hz>.zc.fan{flex-wrap:nowrap;justify-content:safe center;align-items:flex-start;overflow:visible;gap:0;padding:8px 28px 6px;min-height:calc(var(--ch) + 18px)}
+.zc.fan>.slot{margin-left:clamp(calc(var(--cw) * -.82),calc((100% - var(--n) * var(--cw)) / max(var(--n) - 1, 1)),calc(var(--cw) * -.14));
+  transform-origin:50% 100%;transform:translateY(calc(var(--ch) * .08 * var(--t2,0))) rotate(var(--a,0));transition:transform .14s ease-out;z-index:var(--z,1)}
+.zc.fan>.slot:first-child{margin-left:0}
+.zc.fan>.slot>.mc{box-shadow:-2px 2px 6px #0009}
+.zc.fan>.slot:hover{transform:translateY(calc(var(--ch) * -.3)) scale(1.3);z-index:60}
+.zc.fan>.slot:hover>.mc{box-shadow:0 10px 24px #000d}
+.zc.fan>.slot.ok:hover>.mc{box-shadow:0 0 0 2px #7dff9b,0 10px 24px #000d}
+/* 持ち上げても下の元の場所にカーソルが残るように（ちらつかないように）当たりを下へ伸ばす */
+.zc.fan>.slot:hover::before{content:'';position:absolute;left:-10%;right:-10%;top:100%;height:calc(var(--ch) * .4)}

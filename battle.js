@@ -781,22 +781,45 @@ function sideZones(seat, mini) {
 //  上に「今発生している国力」。カードの gp（[色, 数, 条件]、tools/build_cards_js.py が文面から読む）で数える
 // ---------------------------------------------------------------------
 const GCOL = ['白', '青', '緑', '黒', '赤', '茶', '紫'];
+// ---------------------------------------------------------------------
+//  カードの効果の自動反映：文面から決まった形の効果を見つけて、卓の数に足す。
+//  FX_RULES に { k: 名前, re: 文面の形 } を足せば増やせる（見つけた物は fxOf(id).名前 が true）
+// ---------------------------------------------------------------------
+const FX_RULES = [
+  // 貯めG：「このカードは○国力Xを発生する。…Xの値は、このカードの上のコインの個数+1とする」
+  { k: 'gpCoin', re: /国力Xを発生する。[^/]*Xの値は、このカードの上のコインの個数\+1とする/ },
+  // 貯めGの「手札のユニットとコマンド以外を表にして本国の下に移す。その場合、このカードの上にコイン1個」
+  { k: 'tame', re: /手札にあるユニットとコマンド以外のカード1枚を、表にしてから持ち主の本国の下に移す。その場合、このカードの上にコイン1個を乗せる/ }
+];
+const fxCache = new Map();
+function fxOf(id) {
+  if (!id) return {};
+  if (fxCache.has(id)) return fxCache.get(id);
+  const x = BY_ID.get(id), txt = x ? (x.x || []).join('/') : '', fx = {};
+  for (const r of FX_RULES) if (r.re.test(txt)) fx[r.k] = true;
+  fxCache.set(id, fx);
+  return fx;
+}
+const coinCount = c => Object.values(c.cn || {}).reduce((a, b) => a + b, 0);
+// 今そのGが出している国力の数（貯めGはコインの個数+1）
+const gpAmount = (c, gp) => !c.vb && fxOf(c.id).gpCoin ? coinCount(c) + 1 : gp[1];
 const gOpen = new Set();       // 束を広げて見ている席（自分の画面だけ）
 function gPower(seat) {
-  const pow = {}, cnt = {}, roll = {}; let unk = 0;
+  const pow = {}, cnt = {}, roll = {}, fx = {}; let unk = 0;
   const z = VS.seats[seat].z;
   for (const c of [...z.G, ...(z.deploy || []).filter(c => c.vb)]) {   // ヴァリアブルで出したカードも、その色の特殊Gとして数える
     if (c.coin) continue;
     const x = !c.f && c.id && BY_ID.get(c.id), gp = x && (c.vb ? [x.c, 1, ''] : x.gp);
     if (!gp) { unk++; continue; }
-    const [col, k, cond] = gp;
+    const [col, , cond] = gp, k = gpAmount(c, gp);
+    if (k !== gp[1]) fx[col] = (fx[col] || 0) + k - gp[1];   // 効果で増えた分（見出しに出す）
     cnt[col] = (cnt[col] || 0) + 1;
     if (c.r) roll[col] = (roll[col] || 0) + 1;
     const off = (cond === 'R' && c.r) || (cond === 'myTurn' && VS.active !== seat)
       || (cond === 'myDeploy' && !(VS.active === seat && VS.phase === 2));
     if (!off) pow[col] = (pow[col] || 0) + k;
   }
-  return { pow, cnt, roll, unk };
+  return { pow, cnt, roll, unk, fx };
 }
 // 手札のカードが今の国力で出せるか（合計国力・指定国力を満たし、資源の分だけ本国がある）。G やコストのない物は null
 function canPay(x, pw, deckN) {
@@ -812,14 +835,15 @@ function canPay(x, pw, deckN) {
   return true;
 }
 function gSummary(seat) {
-  const arr = VS.seats[seat].z.G, { pow, cnt, roll, unk } = gPower(seat);
+  const arr = VS.seats[seat].z.G, { pow, cnt, roll, unk, fx } = gPower(seat);
   const cols = GCOL.filter(c => cnt[c]);
   const total = Object.values(pow).reduce((a, b) => a + b, 0);
   const chips = cols.map(c => {
-    const p = pow[c] || 0, more = cnt[c] !== p ? `<small>/${cnt[c]}枚</small>` : '';
+    const p = pow[c] || 0, more = cnt[c] !== p - (fx[c] || 0) ? `<small>/${cnt[c]}枚</small>` : '';
+    const tm = fx[c] ? `<small class="gfx" title="貯めG（上のコインの個数+1）で増えている分">貯+${fx[c]}</small>` : '';
     // 基本Gはロールしていても国力を出す。ロールの数は茶（Gをロールして使う効果が多い）だけ見出しに出す
     const r = c === '茶' ? `<small class="rl">ロール${roll[c] || 0}</small>` : '';
-    return `<span class="gchip${p ? '' : ' zero'}" style="--cc:var(--c-${c})" title="${c}：国力${p}（${cnt[c]}枚${roll[c] ? `、ロール${roll[c]}` : ''}）">${c}${p}${more}${r}</span>`;
+    return `<span class="gchip${p ? '' : ' zero'}" style="--cc:var(--c-${c})" title="${c}：国力${p}（${cnt[c]}枚${roll[c] ? `、ロール${roll[c]}` : ''}${fx[c] ? `、うち貯めGで+${fx[c]}` : ''}）">${c}${p}${more}${tm}${r}</span>`;
   }).join('') + (unk ? `<span class="gchip unk" title="出す国力がデータで分からないG（裏向き・効果で決まる物など）。人が判断してください">？${unk}</span>` : '');
   const tog = arr.length ? `<span class="gtog" data-gtog="${seat}">${gOpen.has(seat) ? '束ねる' : '広げる'}</span>` : '';
   const nv = (VS.seats[seat].z.deploy || []).filter(c => c.vb).length;
@@ -849,8 +873,9 @@ function gSlim(c) {
   if (c.coin) return slot(c, 'pub');
   const x = !c.f && c.id && BY_ID.get(c.id), col = x ? (x.gp ? x.gp[0] : x.c) : null;
   const subs = (c.s || []).length ? `<span class="gss">+${c.s.length}</span>` : '';
+  const tame = x && fxOf(c.id).gpCoin ? `<span class="gtame" title="貯めG：コイン${coinCount(c)}個 → ${x.gp ? x.gp[0] : x.c}国力${coinCount(c) + 1}">●${coinCount(c)}<b>${coinCount(c) + 1}</b></span>` : '';
   return `<div class="gb gsl${c.r ? ' allr' : ''}" draggable="${isPlayer()}" data-src="pub" data-u="${esc(c.u)}" ${x ? `data-cid="${esc(c.id)}"` : ''} style="--cc:${col ? `var(--c-${col})` : '#2b3550'}" title="${esc(x ? x.n : '裏向きのカード')}">
-    <span class="gsn">${esc(x ? x.n : '裏')}</span>${subs}${c.r ? '<span class="gbr">R</span>' : ''}</div>`;
+    <span class="gsn">${esc(x ? x.n : '裏')}</span>${tame}${subs}${c.r ? '<span class="gbr">R</span>' : ''}</div>`;
 }
 function gbMenu(seat, col, x, y) {
   const cs = VS.seats[seat].z.G.filter(c => !c.f && !(c.s || []).length && c.id === 'BASIC|' + col);
@@ -951,8 +976,12 @@ function render() {
   } else ctl = `<span class="note">観戦中です。カードに乗せると右に大きく出ます。</span>`;
 
   const pw = B.priv && S.seats[me].su ? gPower(me) : null;
-  const myHand = B.priv ? B.priv.hand.map(c => {
-    let h = slot(c, 'hand');
+  // 手札は扇状（手に持っている形）：真ん中から離れるほど傾けて下げる。--i は真ん中からの位置
+  // 端のカードの傾きは枚数で増やし、最大 ±14度。下がる量は端で カードの高さの 8%（--t2）
+  const hn = B.priv ? B.priv.hand.length : 0, half = (hn - 1) / 2, fanMax = Math.min(14, half * 3.5);
+  const myHand = B.priv ? B.priv.hand.map((c, i) => {
+    const t = half ? (i - half) / half : 0;
+    let h = slot(c, 'hand').replace('<div class="slot', `<div style="--a:${(t * fanMax).toFixed(2)}deg;--t2:${(t * t).toFixed(3)};--z:${i + 1}" class="slot`);
     if (pw && canPay(BY_ID.get(c.id), pw, B.priv.deck.length)) h = h.replace('class="slot', 'title="今の国力で出せます" class="slot ok');
     return mySh.has(c.u) ? h.replace('class="slot', `class="slot shown${myPt === c.u ? ' pt' : ''}`) : h;
   }).join('') : '';
@@ -972,7 +1001,7 @@ function render() {
     </div>
     ${rowHtml2(me)}
     ${B.role === 'spect' ? `<div class="btop">${seatStrip(me, true)}${sideZones(me, true)}</div>` + shownRow(me) : ''}
-    ${B.role !== 'spect' ? `<div class="bhand"><div class="zone hz" data-seat="${me}" data-zone="hand"><div class="zl"><b>${esc(S.seats[me].name)}</b>${S.active === me ? ' <span style="color:var(--accent)">● あなたのターン</span>' : ''}　<span class="znm"><i class="zen">HAND</i>手札<span class="zcnt">${B.priv ? B.priv.hand.length : 0}</span></span>${showing ? `<span class="shnote">● ${mySh.size}枚を公開中</span><button id="bShowOff" class="mini">公開を終える</button>` : '※自分にだけ見えます'}</div><div class="zc">${myHand}</div></div>${sideZones(me, false)}</div>` : ''}
+    ${B.role !== 'spect' ? `<div class="bhand"><div class="zone hz" data-seat="${me}" data-zone="hand"><div class="zl"><b>${esc(S.seats[me].name)}</b>${S.active === me ? ' <span style="color:var(--accent)">● あなたのターン</span>' : ''}　<span class="znm"><i class="zen">HAND</i>手札<span class="zcnt">${B.priv ? B.priv.hand.length : 0}</span></span>${showing ? `<span class="shnote">● ${mySh.size}枚を公開中</span><button id="bShowOff" class="mini">公開を終える</button>` : '※自分にだけ見えます'}</div><div class="zc fan" style="--n:${Math.max(hn, 1)}">${myHand}</div></div>${sideZones(me, false)}</div>` : ''}
     <div class="bctl">${ctl}</div>
     ${shownOverlay(B.role === 'spect' ? [op, me] : [op])}
     </div>
@@ -1143,6 +1172,20 @@ function pubMenu(u, x, y) {
     if (f.i > 0) order.push([`左へ（前へ）${BATTLE.includes(f.zone) && f.i === 1 ? '：先頭にする' : ''}`, () => act({ t: 'zorder', u, d: -1 })]);
     if (f.i < f.arr.length - 1) order.push(['右へ（後ろへ）', () => act({ t: 'zorder', u, d: 1 })]);
     items.splice(items.indexOf('-'), 0, ...order);
+  }
+  // 貯めG：手札のユニットとコマンド以外を表にして本国の下へ、このカードの上にコイン1個（ロールもする）
+  if (!c.f && mine && owner === B.seat && fxOf(c.id).tame && B.priv) {
+    const ok = B.priv.hand.filter(h => { const hx = BY_ID.get(h.id); return hx && !UNIT_T.includes(hx.t) && hx.t !== 'C'; });
+    items.unshift(['貯める（手札1枚を本国の下へ・コイン+1）…', () => {
+      if (!ok.length) return menu(x, y, '貯められる手札がありません（ユニットとコマンド以外）', [['閉じる', () => {}]]);
+      menu(x, y, `『${cname(c)}』に貯める手札（表にして本国の下へ）`, ok.map(h => [cname(h), () => {
+        B.priv.deck.push(takeFromHand(h.u)); savePriv();
+        if (!c.r) act({ t: 'roll', u });
+        act({ t: 'coin', u, name: 'コイン', d: 1 });
+        act({ t: 'note', msg: `『${cname(h)}』を表にして本国の下に移し、『${cname(c)}』にコインを1個乗せました（貯めG：${(BY_ID.get(c.id).gp || [BY_ID.get(c.id).c])[0]}国力${coinCount(c) + 2}）` });
+        render();
+      }]), { cid: c.id });
+    }], '-');
   }
   const coinItems = [['コインを乗せる…', () => coinPick(x, y, `『${cname(c)}』に乗せるコイン`, n => act({ t: 'coin', u, name: n, d: 1 }))]];
   for (const [k, n] of cn) coinItems.push([`${k}（${n}枚）を1枚足す`, () => act({ t: 'coin', u, name: k, d: 1 })], [`${k}を1枚取る`, () => act({ t: 'coin', u, name: k, d: -1 })], [`${k}を外して場に置く`, () => act({ t: 'coinOff', u, name: k })]);
