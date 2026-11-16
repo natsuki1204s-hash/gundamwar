@@ -22,7 +22,7 @@ const PILES = ['junk', 'discard', 'removed'];
 const SECRET = ['discard'];   // 中身が誰にも見えない置き場（捨て山は非公開。枚数だけ見える）
 const PHASES = ['リロールフェイズ', 'ドローフェイズ', '配備フェイズ', '攻撃ステップ', '防御ステップ', 'ダメージ判定ステップ', '帰還ステップ', 'ターンエンド'];
 const HAND0 = 6;              // 最初の手札
-const MOVE_TO = ['deploy', 'space', 'earth', 'ring', 'G', 'cmd', 'hangar', 'junk', 'discard', 'removed'];
+const MOVE_TO = ['deploy', 'space', 'earth', 'ring', 'G', 'hangar', 'junk', 'discard', 'removed'];
 // 前の版で作った盤面（リング・コマンド・ハンガーがない）を開き直した時のために、足りない置き場を足す
 const fillZones = S => S && S.seats.forEach(s => { for (const k in ZONES) if (!s.z[k]) s.z[k] = []; });
 // ヴァリアブル：手札・ハンガーから、自軍配備フェイズに配備エリアへリロール状態・逆向きで出し、そのカードの色の特殊Gとして扱う（Gのプレイ扱い）。c.vb
@@ -243,6 +243,24 @@ function apply(a, who) {
       const from = a.src === 'deck' ? '本国の上から' : '手札から';
       const names = cards.length > 3 || SECRET.includes(a.zone) ? `${cards.length}枚` : cards.map(c => `『${c.f ? '裏向きのカード' : cname(c)}』`).join('');
       log(`${nm}が${from}${names}を${onto ? `『${cname(onto)}』にセット` : zoneLabel(a.seat ?? who.seat, a.zone) + 'へ'}`);
+      return;
+    }
+    case 'cast': {    // 手札のカード（コマンド）をプレイ：資源の分だけ本国の上から捨て山へ、カードは「プレイ中」（席の cmd）へ。盤の真ん中に出る
+      const c0 = a.cards && a.cards[0]; if (!c0) return;
+      const pay = (a.pay || []).map(c => ({ u: c.u, id: c.id, o: who.seat, r: false, f: false, s: [] }));
+      seatObj.z.discard.push(...pay);
+      S.castN = (S.castN || 0) + 1;
+      const card = { u: c0.u, id: c0.id, o: who.seat, r: false, f: false, s: [], at: S.castN, pay: pay.length };
+      seatObj.z.cmd.push(card);
+      log(`${nm}が手札から『${cname(card)}』をプレイ${pay.length ? `（資源${pay.length}：本国の上から${pay.length}枚を捨て山へ）` : ''}${a.short ? '　※国力が足りていないかもしれません' : ''}`);
+      return;
+    }
+    case 'resolve': { // プレイ中のカードの効果を解決し終えた（how:'cut'＝打ち消された）→ 持ち主のジャンクヤードへ
+      const f = findCard(S, a.u); if (!f || f.zone !== 'cmd' || f.parent) return;
+      f.arr.splice(f.i, 1);
+      const c = f.c; [c, ...(c.s || [])].forEach(x => { x.r = false; x.f = false; x.s = []; delete x.cn; delete x.tm; delete x.at; delete x.pay; });
+      S.seats[c.o].z.junk.push(c);
+      log(`${nm}が『${cname(c)}』を${a.how === 'cut' ? '打ち消されたものとして' : '解決し、'}ジャンクヤードへ`);
       return;
     }
     case 'move': {    // 場から場へ
@@ -561,6 +579,23 @@ function playFrom(take, src, u, zone, opt = {}) {
 const playFromHand = (u, zone, opt) => playFrom(takeFromHand, 'hand', u, zone, opt);
 const playFromDeck = (u, zone, opt) => playFrom(takeFromDeck, 'deck', u, zone, opt);
 const playFromLook = (u, zone, opt) => playFrom(takeFromLook, 'deck', u, zone, opt);
+// コマンドのプレイ（2026-11-16 叩き台）：①国力の条件を見る ②資源の分だけ本国の上から捨て山へ・カードを盤の真ん中へ
+// ③効果は人が解決して「解決した」を押す ④持ち主のジャンクヤードへ（apply の cast / resolve）
+const myPow = () => VS && B.priv && VS.seats[mySeat()].su ? gPower(mySeat()) : null;
+function castLabel(x) {
+  const pw = myPow(), ok = pw ? canPay(x, pw, B.priv.deck.length) : null, res = (x.k && x.k[2]) || 0;
+  return `プレイする（${res ? `資源${res}：本国の上から${res}枚を捨て山へ` : '資源なし'}）${ok === false ? '　※国力が足りないかも' : ''}`;
+}
+function castFromHand(u) {
+  if (!online()) { toast('つながっていません'); return; }
+  const c = B.priv.hand.find(c => c.u === u); if (!c) return;
+  const x = BY_ID.get(c.id), res = (x && x.k && x.k[2]) || 0, pw = myPow();
+  if (B.priv.deck.length < res) { toast(`本国が${res}枚ないので資源を払えません`); return; }
+  takeFromHand(u);
+  const pay = B.priv.deck.splice(0, res);
+  savePriv(); render();
+  act({ t: 'cast', cards: [c], pay, short: !!(pw && canPay(x, pw, B.priv.deck.length + res) === false) });
+}
 function startWithDeck(d) {
   const list = [];
   Object.entries(d.cards).forEach(([id, n]) => { if (BY_ID.has(id)) for (let i = 0; i < n; i++) list.push({ u: `${B.seat}${rid()}${list.length}`, id }); });
@@ -774,7 +809,7 @@ function rowHtml2(seat) {
 }
 // コマンド・ハンガー（自分は手札の右に。相手と観戦の見る席は名前の行に小さく）
 function sideZones(seat, mini) {
-  return `<div class="bside2${mini ? ' mini' : ''}">${zoneHtml(seat, 'cmd', 'cmd')}${zoneHtml(seat, 'hangar', 'hang')}</div>`;
+  return `<div class="bside2${mini ? ' mini' : ''}">${zoneHtml(seat, 'hangar', 'hang')}</div>`;
 }
 // ---------------------------------------------------------------------
 //  G 置き場：基本Gは色ごとの束（例「緑×4」）、特殊G・裏向き・セット付きは1枚ずつ。
@@ -941,6 +976,27 @@ function shownOverlay(seats) {
   const h = seats.map(x => shownRow(x, true)).filter(Boolean);
   return h.length ? `<div class="bshowov${h.length > 1 ? ' two' : ''}">${h.join('')}</div>` : '';
 }
+// プレイ中のカード（両者の cmd）を盤の真ん中に大きく。後からプレイした物ほど右（先に解決する）
+let castMin = false, castSig = '';
+function castOverlay() {
+  const list = [];
+  VS.seats.forEach((st, si) => (st.z.cmd || []).forEach(c => list.push({ c, si })));
+  if (!list.length) { castSig = ''; return ''; }
+  list.sort((a, b) => (a.c.at || 0) - (b.c.at || 0));
+  const sig = list.map(x => x.c.u).join(',');
+  if (sig !== castSig) { castSig = sig; castMin = false; }
+  const last = list[list.length - 1].c.u;
+  const cards = list.map(({ c, si }, i) => {
+    const who = esc(VS.seats[si].name || `席${si + 1}`), mine = isPlayer() && si === mySeat(), top = c.u === last;
+    const btn = isPlayer() ? `<div class="cbtn"><button class="primary mini" data-resolve="${esc(c.u)}" title="効果を解決し終えたら押します。カードは${who}のジャンクヤードへ">解決した</button>
+      <button class="mini" data-resolve="${esc(c.u)}" data-how="cut" title="打ち消された時。カードは${who}のジャンクヤードへ">打ち消された</button>
+      ${mine ? `<button class="mini" data-castback="${esc(c.u)}" title="間違えた時。カードは手札へ戻ります（払った資源は捨て山に残ります）">手札に戻す</button>` : ''}</div>` : '';
+    return `<div class="citem${top ? ' top' : ''}${si === mySeat() && B.role !== 'spect' ? ' me' : ''}"><div class="ch"><span class="cno">${i + 1}</span><b>${who}</b>${c.pay ? `<small>資源${c.pay}</small>` : ''}${top && list.length > 1 ? '<span class="cfirst">先に解決</span>' : ''}</div>
+      ${slot(c, 'pub').replace(/draggable="(true|false)"/, 'draggable="false"').replace('data-src="pub"', 'data-src="cast"')}${btn}</div>`;
+  }).join('');
+  if (castMin) return `<div class="bcast min"><span class="hudtag">COMMAND</span><span>プレイ中 <b>${list.length}</b>枚：${list.map(x => '『' + esc(cname(x.c)) + '』').join('')}</span><button class="mini" data-casttog="1">大きく見る ▼</button></div>`;
+  return `<div class="bcast" style="--n:${list.length}"><div class="shh"><span class="hudtag">COMMAND</span>プレイ中のカード<span class="shr">効果を解決したら「解決した」でジャンクヤードへ${list.length > 1 ? '・右から先に解決' : ''}</span><button class="mini shmin" data-casttog="1" title="盤を見たい時に畳みます">小さくする ▲</button></div><div class="zc">${cards}</div></div>`;
+}
 function render() {
   if (!B.S) { renderLobby(); return; }
   regTokens(B.S);
@@ -1004,6 +1060,7 @@ function render() {
     ${B.role !== 'spect' ? `<div class="bhand"><div class="zone hz" data-seat="${me}" data-zone="hand"><div class="zl"><b>${esc(S.seats[me].name)}</b>${S.active === me ? ' <span style="color:var(--accent)">● あなたのターン</span>' : ''}　<span class="znm"><i class="zen">HAND</i>手札<span class="zcnt">${B.priv ? B.priv.hand.length : 0}</span></span>${showing ? `<span class="shnote">● ${mySh.size}枚を公開中</span><button id="bShowOff" class="mini">公開を終える</button>` : '※自分にだけ見えます'}</div><div class="zc fan" style="--n:${Math.max(hn, 1)}">${myHand}</div></div>${sideZones(me, false)}</div>` : ''}
     <div class="bctl">${ctl}</div>
     ${shownOverlay(B.role === 'spect' ? [op, me] : [op])}
+    ${castOverlay()}
     </div>
   </div>
   <div class="bside">
@@ -1196,9 +1253,11 @@ function pubMenu(u, x, y) {
 }
 function handMenu(u, x, y) {
   const c = B.priv.hand.find(c => c.u === u); if (!c) return;
+  const x0 = BY_ID.get(c.id), isCmd = x0 && x0.t === 'C';
   menu(x, y, cname(c), [
+    ...isCmd ? [[castLabel(x0), () => castFromHand(u)], '-'] : [],
     ...variN(BY_ID.get(c.id)) ? [[`ヴァリアブル(${variN(BY_ID.get(c.id))})：配備エリアへ逆向きで出す（${BY_ID.get(c.id).c}の特殊G・Gのプレイ）`, () => playFromHand(u, 'deploy', { vb: true })], '-'] : [],
-    ...['deploy', 'G', 'space', 'earth', 'cmd', 'hangar'].map(z => [`${ZONES[z]}へ出す`, () => playFromHand(u, z)]),
+    ...['deploy', 'G', 'space', 'earth', 'hangar'].map(z => [`${ZONES[z]}へ出す`, () => playFromHand(u, z)]),
     ['裏向きで配備エリアへ', () => playFromHand(u, 'deploy', { f: true })],
     ...(B.priv.show || []).includes(u)
       ? [['このカードの公開をやめる', () => setShow(B.priv.show.filter(x => x !== u), false)]]
@@ -1514,6 +1573,12 @@ root.addEventListener('click', e => {
     if (e.clientX - r.left < r.width * .5 && e.clientY - r.top < r.height * .25 && !sl.classList.contains('r')) { zoomCard(sl.dataset.cid, sl.dataset.src === 'pub' ? sl.dataset.u : undefined); return; }
   }
   if (e.target.closest('#bPrev') && B.prev) { zoomCard(B.prev.cid, B.prev.u); return; }
+  const ctg = e.target.closest('[data-casttog]');
+  if (ctg) { castMin = !castMin; render(); return; }
+  const rsv = e.target.closest('[data-resolve]');
+  if (rsv) { if (isPlayer()) act({ t: 'resolve', u: rsv.dataset.resolve, how: rsv.dataset.how }); return; }
+  const cbk = e.target.closest('[data-castback]');
+  if (cbk) { if (isPlayer()) act({ t: 'leave', u: cbk.dataset.castback, to: 'hand' }); return; }
   const stg = e.target.closest('[data-shtog]');
   if (stg) { const k = stg.dataset.shtog; shMin[k] = !shMin[k]; render(); return; }
   const ph = e.target.closest('[data-ph]');
@@ -1555,11 +1620,14 @@ root.addEventListener('click', e => {
     ], { cid: t.dataset.cid });
     return;
   }
+  if (t.dataset.src === 'cast') { menu(e.clientX, e.clientY, cname({ id: t.dataset.cid }) + '（プレイ中）', [], { cid: t.dataset.cid }); return; }
   if (t.dataset.src === 'hand') handMenu(t.dataset.u, e.clientX, e.clientY);
   else if (t.dataset.src === 'pub') pubMenu(t.dataset.u, e.clientX, e.clientY);
 });
 root.addEventListener('dblclick', e => {
   if (!isPlayer()) return;
+  const h = e.target.closest('[data-src="hand"][data-u]');
+  if (h) { const c = B.priv && B.priv.hand.find(c => c.u === h.dataset.u), x = c && BY_ID.get(c.id); if (x && x.t === 'C') { ctx.classList.remove('on'); castFromHand(c.u); } return; }
   const t = e.target.closest('[data-src="pub"][data-u]'); if (t && !t.dataset.coin) { ctx.classList.remove('on'); act({ t: 'roll', u: t.dataset.u }); }
 });
 
