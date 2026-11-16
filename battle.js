@@ -255,12 +255,43 @@ function apply(a, who) {
       log(`${nm}が手札から『${cname(card)}』をプレイ${pay.length ? `（資源${pay.length}：本国の上から${pay.length}枚を捨て山へ）` : ''}${a.short ? '　※国力が足りていないかもしれません' : ''}`);
       return;
     }
-    case 'resolve': { // プレイ中のカードの効果を解決し終えた（how:'cut'＝打ち消された）→ 持ち主のジャンクヤードへ
+    case 'resolve': { // プレイ中のカードの効果を解決し終えた（how:'cut'＝打ち消された、'manual'＝自動にしない）→ 持ち主のジャンクヤードへ
       const f = findCard(S, a.u); if (!f || f.zone !== 'cmd' || f.parent) return;
+      // 自動解決のカード（AUTO_FX）：効果を動かす席（ふつうは持ち主。密約は引く人）がいるか先に見る
+      const fx = !a.how && AUTO_FX[f.c.id], fxSeat = fx && fx.k === 'draw2' && S.seats[a.ds] ? a.ds | 0 : f.c.o;
+      if (fx && !canReach(fxSeat)) return `${S.seats[fxSeat].name || '持ち主'}がいないので自動では解決できません（「手で解決」を使ってください）`;
       f.arr.splice(f.i, 1);
       const c = f.c; [c, ...(c.s || [])].forEach(x => { x.r = false; x.f = false; x.s = []; delete x.cn; delete x.tm; delete x.at; delete x.pay; });
       S.seats[c.o].z.junk.push(c);
-      log(`${nm}が『${cname(c)}』を${a.how === 'cut' ? '打ち消されたものとして' : '解決し、'}ジャンクヤードへ`);
+      log(`${nm}が『${cname(c)}』を${a.how === 'cut' ? '打ち消されたものとして' : fx ? '解決し（自動）、' : '解決し、'}ジャンクヤードへ`);
+      if (fx) autoHost(fx, c, fxSeat);
+      return;
+    }
+    // ── 自動解決：ブリーフィングの「表にしたカード」を相手が選ぶ（S.pick）
+    case 'fxShow': {
+      const cards = (a.cards || []).filter(x => x && BY_ID.has(x.id)).slice(0, 10).map(x => ({ u: String(x.u), id: x.id }));
+      const src = String(a.src || '').slice(0, 30);
+      if (!cards.length) { log(`${nm}の『${src}』：本国がないので何も起きませんでした`); return; }
+      const others = S.seats.map((x, i) => i).filter(i => i !== who.seat && S.seats[i].name && canReach(i));
+      const ch = others.length ? others[0] : who.seat;
+      S.pick = { k: rid(), seat: who.seat, ch, cards, n: Math.max(1, Math.min(a.n | 0, cards.length)), src };
+      log(`${nm}が『${src}』で本国の上${cards.length}枚を表にしました：${cards.map(x => `『${BY_ID.get(x.id).n}』`).join('')}。${S.seats[ch].name || '相手'}が手札に移す${S.pick.n}枚を選びます`);
+      return;
+    }
+    case 'fxPick': {
+      const P = S.pick; if (!P) return;
+      if (!canReach(P.seat)) return `${S.seats[P.seat].name || '持ち主'}がいないので動かせません`;
+      if (a.cancel) {
+        if (who.seat !== P.seat && who.seat !== P.ch) return;
+        sendFx(P.seat, { t: 'briefDone', us: [] }); S.pick = null;
+        log(`${nm}が『${P.src}』の選択を取りやめました（表にしたカードは本国の上へ）`); return;
+      }
+      if (who.seat !== P.ch) return `選ぶのは${S.seats[P.ch].name || '相手'}です`;
+      const us = [...new Set(a.us || [])].filter(u => P.cards.some(c => c.u === u));
+      if (us.length !== P.n) return `${P.n}枚選んでください`;
+      sendFx(P.seat, { t: 'briefDone', us }); S.pick = null;
+      const rest = P.cards.length - us.length;
+      log(`${nm}が${us.map(u => `『${BY_ID.get(P.cards.find(c => c.u === u).id).n}』`).join('')}を選びました（${S.seats[P.seat].name || '持ち主'}の手札へ${rest ? `。残り${rest}枚は本国の上へ` : ''}）`);
       return;
     }
     case 'move': {    // 場から場へ
@@ -501,7 +532,7 @@ function apply(a, who) {
     case 'rerollAll': eachCard(seatObj, c => c.r = false); log(`${nm}が自分のカードを全てリロール`); return;
     case 'newGame':
       if (who.seat !== 0) return '新しいゲームは部屋を作った人だけが始められます';
-      S.game++; S.turn = 0; S.active = null; S.phase = null; S.first = null; S.reveal = null;
+      S.game++; S.turn = 0; S.active = null; S.phase = null; S.first = null; S.reveal = null; S.pick = null;
       S.seats.forEach(s => { s.z = emptyZones(); s.ready = false; s.dn = 0; s.hn = 0; s.deckName = ''; s.su = null; s.mull = 0; s.pk = null; s.sh = null; });
       log('── 新しいゲーム。デッキを選んで準備してください ──', 'turn');
       return;
@@ -515,6 +546,11 @@ function clearTm(S) {
 }
 function eachCard(seatObj, fn) { Object.values(seatObj.z).forEach(arr => arr.forEach(c => { fn(c); (c.s || []).forEach(fn); })); }
 function canReach(seat) { return seat === mySeat() || B.conns.some(x => x.seat === seat); }
+// 自動解決の続きを、効果を動かす席のブラウザへ（本国・手札はその人のブラウザにしかないため）
+function sendFx(seat, m) {
+  if (seat === mySeat() && B.role === 'host') setTimeout(() => handleFx(m), 0);   // apply の途中で act を呼ばないように後回し
+  else B.conns.filter(x => x.seat === seat).forEach(x => x.conn.send({ k: 'fx', m }));
+}
 function sendGain(seat, card, to) {
   if (seat === mySeat()) gain(card, to);
   else B.conns.filter(x => x.seat === seat).forEach(x => x.conn.send({ k: 'gain', card, to }));
@@ -684,6 +720,7 @@ async function joinRoom(role) {
       if (B.priv && B.priv.game !== B.S.game) { B.priv = null; savePriv(); }
       render();
     } else if (d.k === 'gain') gain(d.card, d.to);
+    else if (d.k === 'fx') handleFx(d.m);
     else if (d.k === 'err') toast(d.msg);
   });
   conn.on('close', () => { B.lost = true; render(); });
@@ -835,6 +872,15 @@ function fxOf(id) {
   fxCache.set(id, fx);
   return fx;
 }
+// よく使うコマンドの自動解決（2026-11-16 試し版）。同じ名前で違う版があるので id で絞る。
+// 「解決する（自動）」で効果を動かしてからジャンクヤードへ（apply の resolve → autoHost / handleFx）
+const AUTO_FX = {
+  'C-22|黒い覇道': { k: 'destroy', d: 'Gとユニット以外のカード1枚を選んで破壊（持ち主のジャンクヤードへ）' },
+  'C-73|ブリーフィング': { k: 'brief', d: '本国の上3枚を表にし、相手が選んだ2枚を手札へ（残りは本国の上）' },
+  'C-7|密約': { k: 'draw2', d: 'プレイヤー1人がカード2枚を引く' },
+  'C-8|サラサ再臨': { k: 'sarasa', d: '本国の上5枚から1枚を手札へ、残りは好きな順で本国の下へ' },
+  'C-2|宝物没収': { k: 'pdraw2', d: '捨て山の上のカード2枚を引く' }
+};
 const coinCount = c => Object.values(c.cn || {}).reduce((a, b) => a + b, 0);
 // 今そのGが出している国力の数（貯めGはコインの個数+1）
 const gpAmount = (c, gp) => !c.vb && fxOf(c.id).gpCoin ? coinCount(c) + 1 : gp[1];
@@ -988,10 +1034,14 @@ function castOverlay() {
   const last = list[list.length - 1].c.u;
   const cards = list.map(({ c, si }, i) => {
     const who = esc(VS.seats[si].name || `席${si + 1}`), mine = isPlayer() && si === mySeat(), top = c.u === last;
-    const btn = isPlayer() ? `<div class="cbtn"><button class="primary mini" data-resolve="${esc(c.u)}" title="効果を解決し終えたら押します。カードは${who}のジャンクヤードへ">解決した</button>
+    const fx = AUTO_FX[c.id], opn = esc(VS.seats[1 - si]?.name || '相手');
+    const res = !fx ? `<button class="primary mini" data-resolve="${esc(c.u)}" title="効果を解決し終えたら押します。カードは${who}のジャンクヤードへ">解決した</button>`
+      : fx.k === 'draw2' ? `<button class="primary mini" data-resolve="${esc(c.u)}" data-ds="${si}" title="自動：${who}が2枚引いて、カードはジャンクヤードへ">${who}が2枚引く</button><button class="primary mini" data-resolve="${esc(c.u)}" data-ds="${1 - si}" title="自動：${opn}が2枚引いて、カードはジャンクヤードへ">${opn}が2枚引く</button><button class="mini" data-resolve="${esc(c.u)}" data-how="manual" title="自動にしないで、手で解決した時">手で解決</button>`
+      : `<button class="primary mini" data-resolve="${esc(c.u)}" title="自動：${esc(fx.d)}。カードは${who}のジャンクヤードへ">解決する（自動）</button><button class="mini" data-resolve="${esc(c.u)}" data-how="manual" title="自動にしないで、手で解決した時">手で解決</button>`;
+    const btn = isPlayer() ? `<div class="cbtn">${res}
       <button class="mini" data-resolve="${esc(c.u)}" data-how="cut" title="打ち消された時。カードは${who}のジャンクヤードへ">打ち消された</button>
       ${mine ? `<button class="mini" data-castback="${esc(c.u)}" title="間違えた時。カードは手札へ戻ります（払った資源は捨て山に残ります）">手札に戻す</button>` : ''}</div>` : '';
-    return `<div class="citem${top ? ' top' : ''}${si === mySeat() && B.role !== 'spect' ? ' me' : ''}"><div class="ch"><span class="cno">${i + 1}</span><b>${who}</b>${c.pay ? `<small>資源${c.pay}</small>` : ''}${top && list.length > 1 ? '<span class="cfirst">先に解決</span>' : ''}</div>
+    return `<div class="citem${top ? ' top' : ''}${si === mySeat() && B.role !== 'spect' ? ' me' : ''}"><div class="ch"><span class="cno">${i + 1}</span><b>${who}</b>${c.pay ? `<small>資源${c.pay}</small>` : ''}${top && list.length > 1 ? '<span class="cfirst">先に解決</span>' : ''}</div>${AUTO_FX[c.id] ? `<div class="cauto" title="「解決する（自動）」で卓が動かします">自動：${esc(AUTO_FX[c.id].d)}</div>` : ''}
       ${slot(c, 'pub').replace(/draggable="(true|false)"/, 'draggable="false"').replace('data-src="pub"', 'data-src="cast"')}${btn}</div>`;
   }).join('');
   if (castMin) return `<div class="bcast min"><span class="hudtag">COMMAND</span><span>プレイ中 <b>${list.length}</b>枚：${list.map(x => '『' + esc(cname(x.c)) + '』').join('')}</span><button class="mini" data-casttog="1">大きく見る ▼</button></div>`;
@@ -1026,6 +1076,7 @@ function render() {
         <input type="number" id="bN" min="1" max="50" value="${esc(nVal)}" title="枚数"><span>枚を</span>
         <button id="bDraw">引く</button><button id="bMill" title="戦闘ダメージ・資源など">本国→捨て山</button><button id="bHeal" title="回復：捨て山の上から枚数ぶんを、裏向きのまま1枚ずつ本国の上へ">回復</button><button id="bLook" title="サーチ：上から見て選び、残りを上か下へ好きな順で戻す">上から見る</button>
         ${B.priv.look?.length ? `<button id="bLookOpen" class="primary">見ているカード（${B.priv.look.length}）</button>` : ''}
+        ${B.priv.fx && B.priv.fx.t !== 'brief' ? `<button id="bFxOpen" class="primary">『${esc(B.priv.fx.src)}』の続き</button>` : ''}
         <span class="sep"></span>
         <button id="bShuffle">本国を切る</button><button id="bSearch">本国を全部見る</button><button id="bReroll">全リロール</button>${showing ? '<button id="bShowOff2">手札の公開を終える</button>' : '<button id="bShowAll" title="公開を終えるまで、相手と観戦に手札が見えます（あとで引いたカードは見せません）">手札を公開</button>'}`;
     }
@@ -1061,6 +1112,7 @@ function render() {
     <div class="bctl">${ctl}</div>
     ${shownOverlay(B.role === 'spect' ? [op, me] : [op])}
     ${castOverlay()}
+    ${pickOverlay()}
     </div>
   </div>
   <div class="bside">
@@ -1105,6 +1157,7 @@ function wire() {
   on('bNext', () => nextPhase());
   on('bEnd', () => act({ t: 'endTurn' }));
   on('bLookOpen', () => openLook());
+  on('bFxOpen', () => openFx());
   on('bDraw', () => { const n = draw(N()); render(); act({ t: 'note', msg: `${n}枚引きました` }); });
   on('bMill', () => {
     if (!online()) return toast('つながっていません');
@@ -1547,6 +1600,126 @@ function lookMenu(u, x, y) {
   ], { cid: c.id, u });
 }
 
+// ---------------------------------------------------------------------
+//  よく使うコマンドの自動解決（AUTO_FX、2026-11-16 試し版）
+//  管理役：autoHost（捨て山は盤面にあるのでその場で）。本国・手札が要る物は sendFx で効果を動かす人のブラウザへ → handleFx
+// ---------------------------------------------------------------------
+function autoHost(fx, c, seat) {
+  const S = B.S, src = cname(c);
+  if (fx.k === 'pdraw2') {   // 宝物没収：捨て山の上2枚を手札へ
+    const st = S.seats[c.o], arr = st.z.discard, n = Math.min(2, arr.length);
+    if (!n) { log(`『${src}』：捨て山がないので引けませんでした`); return; }
+    const got = arr.splice(arr.length - n, n).reverse();
+    if (st.pk && st.pk !== 'all') st.pk = st.pk.filter(u => !got.some(x => x.u === u));
+    got.forEach(x => sendGain(x.o, { u: x.u, id: x.id }, 'hand'));
+    log(`『${src}』：捨て山の上から${n}枚を手札に加えました${n < 2 ? '（捨て山が1枚だけでした）' : ''}`);
+    return;
+  }
+  sendFx(seat, { t: fx.k === 'draw2' ? 'draw' : fx.k, n: 2, src });
+}
+// 効果を動かす人のブラウザで
+function handleFx(m) {
+  if (!B.priv || !m) return;
+  const P = B.priv;
+  if (P.fx && P.fx.cards && m.t !== 'briefDone' && m.t !== 'draw') { P.deck.unshift(...P.fx.cards); P.fx = null; }   // やりかけの物は本国の上へ戻してから
+  if (m.t === 'draw') { const n = draw(m.n); render(); act({ t: 'note', msg: `『${m.src}』の効果でカードを${n}枚引きました` }); return; }
+  if (m.t === 'sarasa') {
+    const cards = P.deck.splice(0, 5);
+    if (!cards.length) { savePriv(); act({ t: 'note', msg: `『${m.src}』：本国がないので何も起きませんでした` }); return; }
+    P.fx = { t: 'sarasa', src: m.src, cards, sel: null }; savePriv();
+    act({ t: 'note', msg: `『${m.src}』：本国の上から${cards.length}枚を見ています` });
+    openFx(); return;
+  }
+  if (m.t === 'brief') {
+    const cards = P.deck.splice(0, 3);
+    P.fx = cards.length ? { t: 'brief', src: m.src, cards } : null; savePriv();
+    act({ t: 'fxShow', cards, src: m.src, n: 2 }); return;
+  }
+  if (m.t === 'briefDone') {
+    const F = P.fx; if (!F || F.t !== 'brief') return;
+    const us = new Set(m.us || []), pick = F.cards.filter(c => us.has(c.u)), rest = F.cards.filter(c => !us.has(c.u));
+    P.hand.push(...pick); P.deck.unshift(...rest); P.fx = null; savePriv(); render();
+    act({ t: 'note', msg: pick.length ? `『${F.src}』：選ばれた${pick.length}枚を手札に加えました${rest.length ? `（残り${rest.length}枚は本国の上）` : ''}` : `『${F.src}』：表にした${rest.length}枚を本国の上に戻しました` });
+    return;
+  }
+  if (m.t === 'destroy') { P.fx = { t: 'destroy', src: m.src, sel: null }; savePriv(); render(); openFx(); }
+}
+// 黒い覇道の対象：場の表向きのカードのうち、G・ユニット（ACE・ヴァリアブルも）とコイン以外。セットしているキャラも1枚ずつ
+const FIELD_Z = ['deploy', 'space', 'earth', 'ring', 'hangar', 'G'];
+function destroyTargets() {
+  const out = [];
+  VS.seats.forEach((st, si) => FIELD_Z.forEach(z => (st.z[z] || []).forEach(c => [c, ...(c.s || [])].forEach(x => {
+    const k = !x.coin && !x.f && x.id && BY_ID.get(x.id);
+    if (k && !['G', 'U', 'A'].includes(k.t) && !x.vb) out.push({ c: x, si, z });
+  }))));
+  return out;
+}
+const fxDlg = document.createElement('dialog'); fxDlg.id = 'fxDlg'; fxDlg.className = 'pdlg'; document.body.appendChild(fxDlg);
+function openFx() {
+  const F = B.priv && B.priv.fx;
+  if (!F || F.t === 'brief') { if (fxDlg.open) fxDlg.close(); render(); return; }
+  const card = (c, i, extra = '') => `<div class="${F.sel === c.u ? 'fxsel' : ''}" data-fx="${esc(c.u)}">${slot(c, 'list').replace(/draggable="(true|false)"/g, 'draggable="false"')}${extra}</div>`;
+  let body, ok;
+  if (F.t === 'sarasa') {
+    const L = F.cards;
+    body = `<p class="note">本国の上から${L.length}枚です（左が上から1枚目）。手札に入れる1枚を押して選び、残りは ◀ ▶ で並べてください。残りは左から順に本国の下へ入ります（右端が一番下）。中身はあなたにしか見えません。</p>
+      <div class="plist">${L.map((c, i) => card(c, i, `<div class="lk"><button data-mv="${i}" data-d="-1" ${i ? '' : 'disabled'}>◀</button><span class="idx">${F.sel === c.u ? '手札へ' : i + 1}</span><button data-mv="${i}" data-d="1" ${i < L.length - 1 ? '' : 'disabled'}>▶</button></div>`)).join('')}</div>`;
+    ok = `<button id="fxOk" class="primary" ${F.sel ? '' : 'disabled'}>選んだ1枚を手札へ・残り${L.length - 1}枚を本国の下へ</button>`;
+  } else {
+    const T = destroyTargets(), me = mySeat();
+    body = `<p class="note">Gとユニット以外の、場のカードです。破壊する1枚を押して選んでください（持ち主のジャンクヤードへ行きます）。</p>
+      <div class="plist">${T.map(({ c, si, z }, i) => card(c, i, `<div class="idx">${si === me ? '自分' : '相手'}の${esc(ZONES[z])}</div>`)).join('') || '<div class="note">（対象になるカードがありません）</div>'}</div>`;
+    ok = `<button id="fxOk" class="primary" ${F.sel && T.some(x => x.c.u === F.sel) ? '' : 'disabled'}>選んだカードを破壊する</button>`;
+  }
+  fxDlg.innerHTML = `<h3>『${esc(F.src)}』の効果</h3>${body}
+    <div class="row">${ok}<button id="fxNo" class="ghost">効果をやめる${F.t === 'sarasa' ? '（本国の上へ戻す）' : ''}</button><button id="fxClose" class="ghost" style="margin-left:auto">いったん閉じる</button></div>`;
+  if (!fxDlg.open) fxDlg.showModal();
+  const done = msg => { B.priv.fx = null; savePriv(); fxDlg.close(); render(); if (msg) act({ t: 'note', msg }); };
+  fxDlg.querySelector('#fxClose').onclick = () => { fxDlg.close(); render(); };
+  fxDlg.querySelector('#fxNo').onclick = () => {
+    if (F.t === 'sarasa') { B.priv.deck.unshift(...F.cards); done(`『${F.src}』の効果をやめました（見ていた${F.cards.length}枚は本国の上へ元の順で）`); }
+    else done(`『${F.src}』の効果をやめました（対象なし）`);
+  };
+  fxDlg.querySelector('#fxOk').onclick = () => {
+    if (F.t === 'sarasa') {
+      const pick = F.cards.find(c => c.u === F.sel); if (!pick) return;
+      const rest = F.cards.filter(c => c !== pick);
+      B.priv.hand.push(pick); B.priv.deck.push(...rest);
+      done(`『${F.src}』：1枚を手札に加え、残り${rest.length}枚を好きな順で本国の下に置きました`);
+    } else {
+      const t = destroyTargets().find(x => x.c.u === F.sel); if (!t) { openFx(); return; }
+      act({ t: 'note', msg: `『${F.src}』で『${cname(t.c)}』を破壊しました` });
+      act({ t: 'move', u: t.c.u, seat: t.c.o ?? t.si, zone: 'junk' });
+      done();
+    }
+  };
+  fxDlg.querySelector('.plist').onclick = e => {
+    const mv = e.target.closest('[data-mv]');
+    if (mv) { const L = F.cards, i = +mv.dataset.mv, j = i + +mv.dataset.d; [L[i], L[j]] = [L[j], L[i]]; savePriv(); openFx(); return; }
+    const f = e.target.closest('[data-fx]'); if (f) { F.sel = F.sel === f.dataset.fx ? null : f.dataset.fx; savePriv(); openFx(); }
+  };
+  fxDlg.querySelector('.plist').onmouseover = e => { const t = e.target.closest('[data-cid]'); if (t) showPrev(t.dataset.cid); };
+}
+// ブリーフィング：表にしたカードを盤の真ん中に。選ぶ人（相手）は押して選び「手札へ」
+let pickSel = new Set(), pickK = '';
+function pickOverlay() {
+  const P = VS.pick; if (!P) { pickK = ''; return ''; }
+  if (P.k !== pickK) { pickK = P.k; pickSel = new Set(); }
+  const me = mySeat(), chooser = isPlayer() && me === P.ch, owner = esc(VS.seats[P.seat].name || '持ち主'), chn = esc(VS.seats[P.ch].name || '相手');
+  const cards = P.cards.map(c => `<div class="citem${pickSel.has(c.u) ? ' fxsel' : ''}" ${chooser ? `data-pk="${esc(c.u)}"` : ''}>${slot(c, 'pub').replace(/draggable="(true|false)"/, 'draggable="false"').replace('data-src="pub"', 'data-src="cast"')}${chooser ? `<div class="cbtn"><span class="mini">${pickSel.has(c.u) ? '✓ 手札へ' : '押して選ぶ'}</span></div>` : ''}</div>`).join('');
+  const btn = chooser ? `<button class="primary mini" data-pk="!ok" ${pickSel.size === P.n ? '' : 'disabled'}>この${P.n}枚を${owner}の手札へ</button>` : `<span class="shr">${chn}が選んでいます</span>`;
+  const cancel = isPlayer() && (me === P.seat || me === P.ch) ? `<button class="mini" data-pk="!no" title="間違えた時など。表にしたカードは本国の上へ戻ります">取りやめ</button>` : '';
+  return `<div class="bcast bpick" style="--n:${P.cards.length}"><div class="shh"><span class="hudtag">${esc(P.src)}</span>${owner}の本国の上${P.cards.length}枚<span class="shr">${chooser ? `手札に移す${P.n}枚を選んでください（あなたが選びます）` : `${chn}が${P.n}枚を選んで${owner}の手札へ`}</span>${btn}${cancel}</div><div class="zc">${cards}</div></div>`;
+}
+function pickClick(k) {
+  const P = VS.pick; if (!P || !isPlayer()) return;
+  if (k === '!no') { act({ t: 'fxPick', cancel: 1 }); return; }
+  if (mySeat() !== P.ch) return;
+  if (k === '!ok') { if (pickSel.size === P.n) act({ t: 'fxPick', us: [...pickSel] }); return; }
+  if (pickSel.has(k)) pickSel.delete(k); else if (pickSel.size < P.n) pickSel.add(k);
+  render();
+}
+
 // 公開されたカード（手札の公開など）を、公開した本人以外に出す
 const revDlg = document.createElement('dialog'); revDlg.id = 'revDlg'; revDlg.className = 'pdlg'; document.body.appendChild(revDlg);
 function checkReveal(S) {
@@ -1576,7 +1749,9 @@ root.addEventListener('click', e => {
   const ctg = e.target.closest('[data-casttog]');
   if (ctg) { castMin = !castMin; render(); return; }
   const rsv = e.target.closest('[data-resolve]');
-  if (rsv) { if (isPlayer()) act({ t: 'resolve', u: rsv.dataset.resolve, how: rsv.dataset.how }); return; }
+  if (rsv) { if (isPlayer()) act({ t: 'resolve', u: rsv.dataset.resolve, how: rsv.dataset.how, ds: rsv.dataset.ds != null ? +rsv.dataset.ds : undefined }); return; }
+  const pk = e.target.closest('[data-pk]');
+  if (pk) { pickClick(pk.dataset.pk); return; }
   const cbk = e.target.closest('[data-castback]');
   if (cbk) { if (isPlayer()) act({ t: 'leave', u: cbk.dataset.castback, to: 'hand' }); return; }
   const stg = e.target.closest('[data-shtog]');
@@ -1682,6 +1857,6 @@ root.addEventListener('drop', e => {
 document.querySelector('nav.tabs button[data-view="battle"]').addEventListener('click', () => { if (!B.S) renderLobby(); else render(); });
 renderLobby();
 window.GWB = B; // 調べ物用
-if (LOCAL) window.GWT = { playFrom, takeFromHand, draw, render, act };   // 試験モードだけ：画面確認の道具から操作する用
+if (LOCAL) window.GWT = { playFrom, takeFromHand, draw, render, act, castFromHand, savePriv, playFromDeck, cname, vs: () => VS };   // 試験モードだけ：画面確認の道具から操作する用
 window.addEventListener('gw-images', () => { if (B.S) render(); });   // みんなの画像が届いたら描き直す
 })();
