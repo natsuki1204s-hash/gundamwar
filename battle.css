@@ -305,3 +305,69 @@ body:has(#battle.on) #toast{bottom:auto;top:56px}
 .bzoom .grp .gh b.tmt{color:#7fe0ff}
 .bzoom .card{width:250px}
 .bzoom .zhint{position:absolute;bottom:6px;font-size:12px;color:var(--sub)}
+
+/* ===== 盤の文字（2026-11-16）=====
+   数字と英字は Chakra Petch（角を落としたメカ風、数字が読みやすい）、日本語は M PLUS 1。
+   名前の札はどこも同じ形：暗い板＋角を1つ落とし＋左に色の線。数は金の数字 */
+#battle{--f-hud:"Chakra Petch","M PLUS 1","Hiragino Sans","Noto Sans JP",sans-serif;--hud:#d6deec;--hud2:#8fa3c2;--cut:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,0 100%);
+  font-family:var(--f-hud);font-feature-settings:"palt"}
+#battle .zone>.zl{font-weight:700;letter-spacing:.04em;color:var(--hud)}
+.znm{display:inline-flex;align-items:center;gap:4px}
+.zen{font-style:normal;font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:.82em;letter-spacing:.14em;color:var(--accent);opacity:.9}
+.zcnt{display:inline-block;min-width:16px;padding:0 4px;border-radius:3px;background:#0009;border:1px solid #ffffff22;color:#fff;font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:11px;line-height:15px;text-align:center;font-variant-numeric:tabular-nums}
+/* 戦闘エリア・リング・配備エリア・ハンガーの名前は札にする（絵の上でも読める） */
+.zone.bat>.zl,.bfield>.zone>.zl{opacity:1}
+.zone.bat>.zl .znm,.zone[data-zone="deploy"]>.zl .znm,.bside2:not(.mini)>.zone.hang>.zl .znm,.bside2:not(.mini)>.zone.cmd>.zl .znm{background:#0c0f16cc;border-left:2px solid var(--accent);padding:1px 8px 1px 5px;clip-path:var(--cut);text-shadow:none;font-size:11px}
+.zone.bat>.zl{display:flex;align-items:center;gap:6px}
+/* 部隊戦闘力：いちばん読む数字なので大きく、はっきり */
+.zone.bat>.zl .bforce{order:3;display:inline-flex;align-items:center;gap:5px;margin:0;padding:1px 9px 1px 7px;border-radius:0;clip-path:var(--cut);
+  background:linear-gradient(180deg,#3a2c08,#1c1504);border:0;box-shadow:inset 0 0 0 1px #e0b14a;color:#ffe7a3;text-shadow:none;font-weight:700}
+.zone.bat>.zl .bforce small{font-size:10.5px;font-weight:800;letter-spacing:.06em;color:#e0b14a}
+.zone.bat>.zl .bforce em{font-style:normal;font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:22px;line-height:24px;color:#fff3c8;text-shadow:0 0 6px #ffcf5a88;font-variant-numeric:tabular-nums}
+.zone.bat>.zl .bforce i{font-style:normal;font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:13px;color:#ffcf5a}
+.zone.bat>.zl .bforce.unk{background:linear-gradient(180deg,#3a2c08,#1c1504)}
+.zone.bat>.zl .znm{order:1}
+.zone.bat>.zl .zadd{order:2}
+.bfield.bg-ring>.zone>.zl{flex-direction:column;align-items:flex-start;gap:2px}
+/* 先頭・トークンなどの小札、本国・捨て山の数、G の国力も同じ書体 */
+.leadtag,.tktag,.slot.pt::after{font-family:"Chakra Petch","M PLUS 1",sans-serif;letter-spacing:.04em}
+.zone.bat .leadbox{font-family:"Chakra Petch","M PLUS 1",sans-serif;font-size:12px}
+.pile .num{font-family:"Chakra Petch",sans-serif;font-weight:700}
+.bring2 .pile>.zl,.pile>.zl{font-weight:700;letter-spacing:.02em;color:var(--hud)}
+.gchip,.gb .gbc,.gb .gbn,.mc .mst,.mc .mcost,.gst,.coin,.tmb{font-family:"Chakra Petch","M PLUS 1",sans-serif}
+.mc .mst,.mc .mcost{font-weight:700;letter-spacing:.02em}
+.zone>.zl.gsum{font-family:var(--f-hud)}
+.zone>.zl.gsum>b{font-family:"Chakra Petch",sans-serif}
+.binfo .roomcode{font-family:"Chakra Petch",sans-serif;font-weight:700;letter-spacing:.12em}
+.bphase>b{font-family:var(--f-hud);font-weight:800;letter-spacing:.06em}
+.bphase .ph{font-weight:700;letter-spacing:.04em}
+.bstrip b{font-weight:800;letter-spacing:.04em}
+
+/* ===== 公開中の手札：盤の上に大きく（2026-11-16）===== */
+.bmain{position:relative}
+.bshowov{position:absolute;left:8px;right:8px;top:44px;z-index:40;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.bshown.big{pointer-events:auto;margin:0;padding:8px 12px 12px;flex-direction:column;align-items:stretch;gap:8px;border:0;border-radius:0;clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px));
+  background:linear-gradient(180deg,#221d10,#15131c);box-shadow:inset 0 0 0 1px #e0b14a,0 10px 30px #000c;
+  --ch:clamp(96px,min(30vh,calc((100vw - 450px) / var(--n,6) / .713 - 14px)),220px);--cw:calc(var(--ch) * .713)}
+.bshowov.two .bshown.big{--ch:clamp(80px,min(22vh,calc((100vw - 450px) / var(--n,6) / .713 - 14px)),170px)}
+.bshown.big .shh{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;color:var(--hud);font-weight:700}
+.bshown.big .shh b{color:#fff;font-size:15px}
+.bshown .shn{font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:1.35em;color:#ffe7a3;margin-right:1px}
+.bshown .shr{color:var(--hud2);font-weight:500}
+.bshown.big .shhint{color:var(--hud2);font-size:11.5px;font-weight:500}
+.bshown.big .shmin{margin-left:auto}
+.hudtag{font-family:"Chakra Petch",sans-serif;font-weight:700;font-size:11px;letter-spacing:.18em;color:#1b1a17;background:var(--accent);padding:1px 10px 1px 6px;clip-path:var(--cut)}
+.bshown.big>.zc{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;max-height:calc(var(--ch) * 2 + 30px);overflow:auto;padding:4px 2px 8px}
+.bshown.big .mc{font-size:calc(var(--ch) * .07);padding:calc(var(--ch) * .03);border-radius:7px;box-shadow:0 4px 10px #000a}
+.bshown.big .mc .mst,.bshown.big .mc .mcost{font-size:calc(var(--ch) * .08)}
+.bshown.big .mc .mname{-webkit-line-clamp:4}
+.bshown.big .mc.back{font-size:calc(var(--ch) * .1);text-align:center}
+.bshown.big .slot:hover>.mc{outline:2px solid var(--accent);outline-offset:2px}
+.bshown.big .slot.pt::after{font-size:13px;padding:1px 8px;bottom:-6px}
+.bshown .zl .mini{margin-top:2px;padding:0 6px;font-size:10.5px}
+.bshown:not(.big){--ch:44px;--cw:31px;padding:2px 6px}
+.bshown:not(.big)>.zl{flex-basis:auto;display:flex;flex-direction:column;gap:1px;line-height:1.3;white-space:nowrap}
+.bshown:not(.big)>.zl .mini{margin:0;align-self:flex-start;padding:0 8px;line-height:16px}
+.bshown:not(.big) .shn{font-size:1.15em}
+.bfield.bg-ring .zen{display:none}
+.bfield.bg-ring>.zone>.zl .znm{padding:1px 6px 1px 4px}

@@ -16,6 +16,8 @@ if (!CARDS.length) return;
 const PFX = 'gundamwar-taku-';
 const LOCAL = new URLSearchParams(location.search).has('local');
 const ZONES = { G: 'G', deploy: '配備エリア', space: '戦闘エリア（宇宙）', earth: '戦闘エリア（地球）', ring: 'リング', junk: 'ジャンクヤード', discard: '捨て山', removed: '除外', cmd: 'コマンド', hangar: 'ハンガー' };
+// 盤の名前に添える英字（見た目の飾り。2026-11-16）
+const ZEN = { deploy: 'DEPLOY', space: 'SPACE', earth: 'EARTH', ring: 'RING', cmd: 'COMMAND', hangar: 'HANGAR' };
 const PILES = ['junk', 'discard', 'removed'];
 const SECRET = ['discard'];   // 中身が誰にも見えない置き場（捨て山は非公開。枚数だけ見える）
 const PHASES = ['リロールフェイズ', 'ドローフェイズ', '配備フェイズ', '攻撃ステップ', '防御ステップ', 'ダメージ判定ステップ', '帰還ステップ', 'ターンエンド'];
@@ -757,9 +759,9 @@ function zoneHtml(seat, z, cls = '') {
   }
   const bat = BATTLE.includes(z), fo = bat ? forceOf(arr) : null;
   const lead = bat && !fo ? '<div class="leadbox" title="戦闘エリアは左が先頭です（カードのメニューで前後を入れ替え）"><span>先頭</span></div>' : '';
-  const force = fo ? `<b class="bforce${fo.unk ? ' unk' : ''}" title="部隊戦闘力＝先頭のユニットの格闘力＋2番目からのユニットの射撃力（コイン・一時修正込み）\n${esc(fo.note)}${fo.unk ? '\n数字でない所（*など）は0として数えています' : ''}">部隊戦闘力 ${fo.total}${fo.unk ? '＋？' : ''}</b>` : '';
+  const force = fo ? `<b class="bforce${fo.unk ? ' unk' : ''}" title="${ZONES[z]}の部隊戦闘力＝先頭のユニットの格闘力＋2番目からのユニットの射撃力（コイン・一時修正込み）\n${esc(fo.note)}${fo.unk ? '\n数字でない所（*など）は0として数えています' : ''}"><small>部隊戦闘力</small><em>${fo.total}</em>${fo.unk ? '<i>＋?</i>' : ''}</b>` : '';
   const add = isPlayer() && seat === mySeat() && !['cmd', 'hangar'].includes(z) ? `<span class="zadd" data-coinzone="${z}" title="この置き場にコインやトークン（ボルジャーノンコインなど、効果で出るユニット）を置きます（カードの上に乗せるのはカードのメニューか、コインをカードへドラッグ）">＋コイン</span>` : '';
-  return `<div class="zone ${cls}${bat ? ' bat' : ''}" data-seat="${seat}" data-zone="${z}"><div class="zl">${force}${ZONES[z]}${arr.length ? `（${arr.length}）` : ''}${add}</div><div class="zc">${lead}${arr.map(c => slot(c, 'pub', !!fo && c.u === fo.lead)).join('')}</div></div>`;
+  return `<div class="zone ${cls}${bat ? ' bat' : ''}" data-seat="${seat}" data-zone="${z}"><div class="zl">${force}<span class="znm">${ZEN[z] ? `<i class="zen">${ZEN[z]}</i>` : ''}${bat ? ZONES[z].replace(/^戦闘エリア（(.+)）$/, '$1') : ZONES[z]}${arr.length ? `<span class="zcnt">${arr.length}</span>` : ''}</span>${add}</div><div class="zc">${lead}${arr.map(c => slot(c, 'pub', !!fo && c.u === fo.lead)).join('')}</div></div>`;
 }
 function deckPile(seat) {
   const s = VS.seats[seat], mine = seat === B.seat && B.priv;
@@ -891,13 +893,28 @@ function syncShow() {
   B.showAll = false;
 }
 function setShow(us, all) { B.priv.show = us; B.showAll = all; savePriv(); syncShow(); render(); }
-// 相手（観戦なら両者）の公開中の手札
-function shownRow(seat) {
+// 相手（観戦なら両者）の公開中の手札。ふだんは盤の上に大きく重ねて出す（2026-11-16）。
+// 「小さくする」で前の1行に畳め、公開されるカードが変わるとまた大きく出る
+const shMin = {}, shSig = {};
+function shownRow(seat, big) {
   const s = VS.seats[seat], sh = s.sh; if (!sh || !sh.c.length) return '';
+  const sig = sh.c.map(c => c.u).join(',');
+  if (shSig[seat] !== sig) { shSig[seat] = sig; shMin[seat] = false; }
+  if (!!shMin[seat] === !!big) return '';
   const rest = Math.max(0, s.hn - sh.c.length);
   const canPt = isPlayer() && seat !== mySeat();
-  return `<div class="bshown"><div class="zl"><b>${esc(s.name || `席${seat + 1}`)}</b>の手札を公開中<br>${sh.c.length}枚${rest ? `（ほかに裏${rest}枚）` : '（全部）'}${canPt ? '<br><span style="color:var(--sub)">押すと指定（ハンデスなど）</span>' : ''}</div>
-    <div class="zc">${sh.c.map(c => slot({ u: c.u, id: c.id }, 'shown').replace(/draggable="(true|false)"/, 'draggable="false"').replace('class="slot', `data-seat="${seat}" class="slot${sh.pt === c.u ? ' pt' : ''}`)).join('')}${rest ? `<div class="slot"><div class="mc back">×${rest}</div></div>` : ''}</div></div>`;
+  const who = esc(s.name || `席${seat + 1}`);
+  const cards = sh.c.map(c => slot({ u: c.u, id: c.id }, 'shown').replace(/draggable="(true|false)"/, 'draggable="false"').replace('class="slot', `data-seat="${seat}" class="slot${sh.pt === c.u ? ' pt' : ''}`)).join('')
+    + (rest ? `<div class="slot"><div class="mc back">裏<br>×${rest}</div></div>` : '');
+  const cnt = `<span class="shn">${sh.c.length}</span>枚${rest ? `<span class="shr">（ほかに裏 ${rest}枚）</span>` : '<span class="shr">（全部）</span>'}`;
+  if (big) return `<div class="bshown big" style="--n:${sh.c.length + (rest ? 1 : 0)}"><div class="shh"><span class="hudtag">OPEN HAND</span><b>${who}</b>の手札を公開中　${cnt}${canPt ? '<span class="shhint">押すと指定（ハンデスなど）・乗せると右に大きく</span>' : ''}<button class="mini shmin" data-shtog="${seat}" title="1行に畳みます（公開中のカードが変わるとまた大きく出ます）">小さくする ▲</button></div>
+    <div class="zc">${cards}</div></div>`;
+  return `<div class="bshown"><div class="zl"><span><b>${who}</b>の手札を公開中　${cnt}</span><button class="mini" data-shtog="${seat}">大きく見る ▼</button></div>
+    <div class="zc">${cards}</div></div>`;
+}
+function shownOverlay(seats) {
+  const h = seats.map(x => shownRow(x, true)).filter(Boolean);
+  return h.length ? `<div class="bshowov${h.length > 1 ? ' two' : ''}">${h.join('')}</div>` : '';
 }
 function render() {
   if (!B.S) { renderLobby(); return; }
@@ -955,8 +972,9 @@ function render() {
     </div>
     ${rowHtml2(me)}
     ${B.role === 'spect' ? `<div class="btop">${seatStrip(me, true)}${sideZones(me, true)}</div>` + shownRow(me) : ''}
-    ${B.role !== 'spect' ? `<div class="bhand"><div class="zone hz" data-seat="${me}" data-zone="hand"><div class="zl"><b>${esc(S.seats[me].name)}</b>${S.active === me ? ' <span style="color:var(--accent)">● あなたのターン</span>' : ''}　手札（${B.priv ? B.priv.hand.length : 0}）${showing ? `<span class="shnote">● ${mySh.size}枚を公開中</span><button id="bShowOff" class="mini">公開を終える</button>` : '※自分にだけ見えます'}</div><div class="zc">${myHand}</div></div>${sideZones(me, false)}</div>` : ''}
+    ${B.role !== 'spect' ? `<div class="bhand"><div class="zone hz" data-seat="${me}" data-zone="hand"><div class="zl"><b>${esc(S.seats[me].name)}</b>${S.active === me ? ' <span style="color:var(--accent)">● あなたのターン</span>' : ''}　<span class="znm"><i class="zen">HAND</i>手札<span class="zcnt">${B.priv ? B.priv.hand.length : 0}</span></span>${showing ? `<span class="shnote">● ${mySh.size}枚を公開中</span><button id="bShowOff" class="mini">公開を終える</button>` : '※自分にだけ見えます'}</div><div class="zc">${myHand}</div></div>${sideZones(me, false)}</div>` : ''}
     <div class="bctl">${ctl}</div>
+    ${shownOverlay(B.role === 'spect' ? [op, me] : [op])}
     </div>
   </div>
   <div class="bside">
@@ -1446,6 +1464,8 @@ function checkReveal(S) {
 // 盤面のクリック
 root.addEventListener('click', e => {
   if (!B.S || ctx.contains(e.target)) return;
+  const stg = e.target.closest('[data-shtog]');
+  if (stg) { const k = stg.dataset.shtog; shMin[k] = !shMin[k]; render(); return; }
   const ph = e.target.closest('[data-ph]');
   if (ph) { act({ t: 'phase', p: +ph.dataset.ph }); return; }
   const pile = e.target.closest('[data-pile]');
@@ -1544,5 +1564,6 @@ root.addEventListener('drop', e => {
 document.querySelector('nav.tabs button[data-view="battle"]').addEventListener('click', () => { if (!B.S) renderLobby(); else render(); });
 renderLobby();
 window.GWB = B; // 調べ物用
+if (LOCAL) window.GWT = { playFrom, takeFromHand, draw, render, act };   // 試験モードだけ：画面確認の道具から操作する用
 window.addEventListener('gw-images', () => { if (B.S) render(); });   // みんなの画像が届いたら描き直す
 })();
