@@ -434,3 +434,27 @@ body:has(#battle.on) #toast{bottom:auto;top:56px}
 .ptbtn{padding:1px 10px;font-size:11px;line-height:18px;background:#2a2412;border-color:var(--accent);color:var(--accent)}
 .ptbtn.on{background:var(--accent);color:#1b1a17}
 .bshown:not(.big) .ptbtn{padding:0 5px;font-size:9.5px;line-height:14px}
+
+/* ===== 直す所リスト5回目（2026-11-16）===== */
+/* 本国・捨て山の束：厚み（--h＝デッキに対する残りの割合）の分だけカードの側面を下に見せ、上の面を持ち上げる */
+.slot.stk{position:relative;--sd:calc(var(--ch) * .18);padding-top:calc(var(--sd) * (1 - var(--h)));padding-bottom:calc(var(--sd) * var(--h))}
+.slot.stk::after{content:'';position:absolute;left:1px;right:1px;bottom:0;height:calc(var(--sd) * var(--h) + 6px);border-radius:0 0 5px 5px;
+  background:repeating-linear-gradient(to bottom,#c9d1e3 0 1px,#3d4762 1px 2.5px);box-shadow:0 3px 6px #000c,inset 1px 0 0 #0008,inset -1px 0 0 #0008}
+.slot.stk>.mc{position:relative;z-index:1;height:calc(var(--ch) - var(--sd));width:calc(var(--cw) * .82);box-shadow:0 1px 0 #c9d1e3,0 2px 3px #0009}
+.bring2 .pile>.zc{overflow:visible}
+.pile .num{z-index:2}
+/* 効果で送ったカード（貯めG）を見せる */
+.bsent{z-index:47;top:44%;box-shadow:inset 0 0 0 1px #9fe3b0,0 12px 34px #000d}
+.bsent .hudtag{background:#9fe3b0}
+.bsent .citem{opacity:1}
+.bsent .shh .primary{margin-left:auto}
+/* ターンエンドの確認 */
+.bendask{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:48;max-width:min(560px,calc(100% - 24px));padding:12px 18px 14px;display:flex;flex-direction:column;gap:10px;align-items:flex-start;
+  clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px));
+  background:linear-gradient(180deg,#2a1c10,#15131c);box-shadow:inset 0 0 0 1px #e89a5f,0 12px 34px #000d}
+.bendask .hudtag{background:#e89a5f}
+.bendask .eq{font-size:15px;color:#fbe7d6;font-weight:700;line-height:1.5}
+.bendask .eq b{color:#fff}
+.bendask .ebtn{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.bendask .shr{color:var(--hud2);font-size:12px}
+.tms.auto{color:#9fe3b0}

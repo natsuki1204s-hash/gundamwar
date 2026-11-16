@@ -255,6 +255,14 @@ function flatSets(S) {      // 前の不具合（セット中のカードにセ�
     g.s = out;
   })));
 }
+function endTurnNow(S) {
+  clearTm(S);
+  S.endAsk = null; S.sent = null;
+  const nx = (S.active + 1) % S.seats.length;
+  S.active = nx; S.turn = (S.turn || 0) + 1; S.phase = 0;
+  eachCard(S.seats[nx], c => c.r = false);
+  log(`── 第${S.turn}ターン ${S.seats[nx].name || `席${nx + 1}`}のターン（${PHASES[0]}：全リロール）──`, 'turn');
+}
 function log(msg, cls = '') { const S = B.S; S.log.push({ m: msg, c: cls }); if (S.log.length > 300) S.log.splice(0, S.log.length - 300); }
 const zoneLabel = (seat, z) => (B.S.seats[seat].name || `席${seat + 1}`) + 'の' + ZONES[z];
 
@@ -269,7 +277,7 @@ function apply(a, who) {
   switch (a.t) {
     case 'counts': return;
     case 'note': log(`${nm}が${a.msg}`); return;
-    case 'ready': seatObj.ready = true; seatObj.deckName = a.deckName || ''; log(`${nm}が「${seatObj.deckName}」で準備しました`, 'sys'); return;
+    case 'ready': seatObj.ready = true; seatObj.deckName = a.deckName || ''; seatObj.dt = Math.max(0, a.dt | 0) || null; log(`${nm}が「${seatObj.deckName}」で準備しました`, 'sys'); return;
     case 'enter': {   // 手札・本国から場へ
       const tz = S.seats[a.seat ?? who.seat]?.z[a.zone]; if (!tz) return;
       const cards = a.cards.map(c => ({ u: c.u, id: c.id, o: who.seat, r: false, f: !!a.f && !PILES.includes(a.zone), s: [], ...(a.vb && a.zone === 'deploy' ? { vb: true } : {}) }));
@@ -504,13 +512,37 @@ function apply(a, who) {
       S.phase = Math.max(0, Math.min(PHASES.length - 1, a.p | 0));
       log(`${PHASES[S.phase]}${a.drew != null ? `（${a.drew ? a.drew + '枚ドロー' : '先攻1ターン目なので引かない'}）` : ''}`, 'phase');
       return;
+    // ターンエンド（2026-11-16）：手番の人が押すと、まず相手に「エンド前にやることはありますか？」と聞く（S.endAsk）。
+    // 相手が「ない」で本当に終わる。「ある」なら相手が済ませて「済んだ」を押すまで待つ。相手がいない時・a.force ならすぐ終わる
     case 'endTurn': {
       if (who.seat !== S.active) return '手番の人だけがターンを終えられます';
-      clearTm(S);
-      const nx = (S.active + 1) % S.seats.length;
-      S.active = nx; S.turn = (S.turn || 0) + 1; S.phase = 0;
-      eachCard(S.seats[nx], c => c.r = false);
-      log(`── 第${S.turn}ターン ${S.seats[nx].name || `席${nx + 1}`}のターン（${PHASES[0]}：全リロール）──`, 'turn');
+      const opp = S.seats.map((x, i) => i).filter(i => i !== who.seat && S.seats[i].name && S.seats[i].su === 'done' && canReach(i));
+      if (!a.force && opp.length) {
+        if (S.endAsk) return '相手の返事を待っています';
+        S.endAsk = { k: rid(), seat: who.seat, ch: opp[0], wait: false };
+        S.phase = PHASES.length - 1;
+        log(`${nm}がターンを終えようとしています。${S.seats[opp[0]].name || '相手'}に、エンド前にやることがあるか確かめています`, 'phase');
+        return;
+      }
+      if (a.force && S.endAsk) log(`${nm}が相手の返事を待たずにターンを終えました`);
+      endTurnNow(S);
+      return;
+    }
+    case 'endAns': {  // ターンエンドの確認への返事。ok：ない／済んだ → 終わる。wait：やることがある。cancel：手番の人が取りやめ
+      const E = S.endAsk; if (!E) return;
+      if (a.cancel) { if (who.seat !== E.seat) return; S.endAsk = null; log(`${nm}がターンエンドを取りやめました`); return; }
+      if (who.seat !== E.ch) return `返事をするのは${S.seats[E.ch].name || '相手'}です`;
+      if (a.wait) { E.wait = true; log(`${nm}：エンド前にやることがあります（済んだら「済んだ」を押します）`, 'phase'); return; }
+      log(`${nm}：${E.wait ? 'エンド前にやることが済みました' : 'エンド前にやることはありません'}`, 'phase');
+      endTurnNow(S);
+      return;
+    }
+    // 効果で本国の下などへ送ったカードを、盤の真ん中に見せる（貯めG など。2026-11-16）。見た人が「OK」で閉じる（自分の画面だけ）
+    case 'sent': {
+      const ids = (a.ids || []).filter(id => BY_ID.has(id)).slice(0, 10);
+      if (!ids.length) return;
+      S.sent = { k: rid(), seat: who.seat, ids, src: String(a.src || '').slice(0, 30), to: String(a.to || '本国の下').slice(0, 20) };
+      log(`${nm}が${String(a.msg || '').slice(0, 200)}`);
       return;
     }
     // ── 捨て山（非公開）を持ち主が触る。見ている間だけ、見ているカードの中身を持ち主に送る（seat.pk）
@@ -573,6 +605,7 @@ function apply(a, who) {
       if (who.seat !== 0) return '新しいゲームは部屋を作った人だけが始められます';
       S.game++; S.turn = 0; S.active = null; S.phase = null; S.first = null; S.reveal = null; S.pick = null;
       S.seats.forEach(s => { s.z = emptyZones(); s.ready = false; s.dn = 0; s.hn = 0; s.deckName = ''; s.su = null; s.mull = 0; s.pk = null; s.sh = null; });
+      S.endAsk = null; S.sent = null; S.pick = null;
       log('── 新しいゲーム。デッキを選んで準備してください ──', 'turn');
       return;
   }
@@ -640,7 +673,32 @@ function draw(n) {
   if (!B.priv) return 0;
   const got = B.priv.deck.splice(0, n);
   B.priv.hand.push(...got); savePriv();
+  if (got.length) drawSE(got.length);
   return got.length;
+}
+// ドローの効果音（2026-11-16）。音のファイルは使わず、ブラウザでその場で作る（カードをめくる「シュッ」）。卓の右上の「音」で消せる
+let audioCtx = null;
+const seOn = () => store.get('se', '1') !== '0';
+function drawSE(n) {
+  if (!seOn()) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const ac = audioCtx, len = Math.floor(ac.sampleRate * .09);
+    const buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) { const t = i / len; d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 2) * Math.min(1, t * 12); }
+    for (let k = 0; k < Math.min(n, 4); k++) {
+      const t0 = ac.currentTime + k * .1;
+      const src = ac.createBufferSource(); src.buffer = buf;
+      const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = .9;
+      bp.frequency.setValueAtTime(1800, t0); bp.frequency.exponentialRampToValueAtTime(5200, t0 + .08);
+      const g = ac.createGain(); g.gain.value = .55;
+      src.connect(bp).connect(g).connect(ac.destination); src.start(t0);
+      const o = ac.createOscillator(), og = ac.createGain();   // 最後に「パチッ」と置く音
+      o.type = 'triangle'; o.frequency.setValueAtTime(900, t0 + .07); o.frequency.exponentialRampToValueAtTime(300, t0 + .11);
+      og.gain.setValueAtTime(.0001, t0 + .07); og.gain.exponentialRampToValueAtTime(.25, t0 + .075); og.gain.exponentialRampToValueAtTime(.0001, t0 + .12);
+      o.connect(og).connect(ac.destination); o.start(t0 + .07); o.stop(t0 + .13);
+    }
+  } catch (e) {}
 }
 const takeFrom = (arr, u) => { const i = arr.findIndex(c => c.u === u); return i < 0 ? null : arr.splice(i, 1)[0]; };
 const takeFromHand = u => takeFrom(B.priv.hand, u);
@@ -676,7 +734,7 @@ function startWithDeck(d) {
   Object.entries(d.cards).forEach(([id, n]) => { if (BY_ID.has(id)) for (let i = 0; i < n; i++) list.push({ u: `${B.seat}${rid()}${list.length}`, id }); });
   if (!list.length) { toast('このデッキは空です'); return; }
   B.priv = { game: B.S.game, deck: shuffle(list), hand: [], look: [] };
-  savePriv(); act({ t: 'ready', deckName: d.name });
+  savePriv(); act({ t: 'ready', deckName: d.name, dt: list.length });
   toast('本国を切りました。「ゲームスタート」で最初の手札を引きます');
 }
 
@@ -826,6 +884,7 @@ function cardStats(g) {
   const tot = st.slice();
   const add = arr => arr.forEach((v, i) => { v = String(v); if (/^[+\-±]?\d+$/.test(v) && /^-?\d+$/.test(tot[i])) tot[i] = String(+tot[i] + +v.replace('±', '')); });
   for (const x of g.s || []) { const c = x.id && BY_ID.get(x.id); if (c && c.st) add(c.st); }
+  for (const x of g.s || []) if (!x.f && fxOf(x.id).trBoost) { const n = trCount(x.o ?? g.o); add([n, n, n]); }   // シールド・キャノン（自動）
   coinMods([g, ...(g.s || [])]).forEach(add);
   [g, ...(g.s || [])].forEach(x => x.tm && add(x.tm.d));
   return tot;
@@ -854,7 +913,7 @@ function slot(c, src, lead = false) {
   if (c.coin) return `<div class="slot ctok" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" data-coin="1" title="${esc(c.coin)} ${c.n}枚（カードに落とすと乗せます）"><div class="mc ctk"><span>${esc(c.coin.replace(/コイン$/, '') || 'コイン')}</span><b>×${c.n}</b></div></div>`;
   const known = c.id && BY_ID.get(c.id);
   const depth = x => { let d = 0, y = x; while (y && y.on && d < 20) { y = (c.s || []).find(z => z.u === y.on); d++; } return d; };
-  const subs = (c.s || []).map(x => { const on = x.on && (c.s || []).find(z => z.u === x.on), dp = depth(x); return `<div class="sub${x.r ? ' r' : ''}${dp ? ' on' : ''}" style="${dp ? `--dp:${dp}` : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(x.u)}" ${x.id ? `data-cid="${esc(x.id)}"` : ''} title="${on ? `『${esc(on.f && !on.id ? '裏向きのカード' : cname(on))}』の上にセットしているカード` : 'セットしているカード'}。押すとこのカードだけ動かせます（手札・本国・捨て山など）。このカードの上にさらにセットするには、ここへ落とします">${dp ? '↳'.repeat(Math.min(dp, 3)) : ''}${esc(x.f && !x.id ? '裏向き' : cname(x))}${Object.keys(x.cn || {}).length ? ` ●${Object.values(x.cn).reduce((a, b) => a + b, 0)}` : ''}${x.tm ? ` <span class="tms" title="${esc(tmTitle(x.tm))}">${esc(tmLabel(x.tm))}</span>` : ''}</div>`; }).join('');
+  const subs = (c.s || []).map(x => { const on = x.on && (c.s || []).find(z => z.u === x.on), dp = depth(x); return `<div class="sub${x.r ? ' r' : ''}${dp ? ' on' : ''}" style="${dp ? `--dp:${dp}` : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(x.u)}" ${x.id ? `data-cid="${esc(x.id)}"` : ''} title="${on ? `『${esc(on.f && !on.id ? '裏向きのカード' : cname(on))}』の上にセットしているカード` : 'セットしているカード'}。押すとこのカードだけ動かせます（手札・本国・捨て山など）。このカードの上にさらにセットするには、ここへ落とします">${dp ? '↳'.repeat(Math.min(dp, 3)) : ''}${esc(x.f && !x.id ? '裏向き' : cname(x))}${Object.keys(x.cn || {}).length ? ` ●${Object.values(x.cn).reduce((a, b) => a + b, 0)}` : ''}${x.tm ? ` <span class="tms" title="${esc(tmTitle(x.tm))}">${esc(tmLabel(x.tm))}</span>` : ''}${!x.f && fxOf(x.id).trBoost ? (n => ` <span class="tms auto" title="自動：場・自軍ハンガー・自軍ジャンクヤードの「名称:TR」のユニット${n}枚（5まで）→ +${n}/+${n}/+${n}（合計に足しています）">自動+${n}</span>`)(trCount(x.o ?? c.o)) : ''}</div>`; }).join('');
   const tot = !c.f ? groupStats(c) : null;
   const v = c.v && !c.f && known && known.alt;
   const tmc = hasTm(c) ? ' tm' : '';
@@ -866,7 +925,7 @@ function zoneHtml(seat, z, cls = '') {
   const arr = VS.seats[seat].z[z];
   if (PILES.includes(z)) {
     const top = arr[arr.length - 1];
-    const face = !top ? '' : SECRET.includes(z) ? '<div class="slot"><div class="mc back">GW</div></div>' : slot(top, 'pub').replace('draggable="true"', 'draggable="false"');
+    const face = !top ? '' : SECRET.includes(z) ? stackHtml(seat, arr.length) : slot(top, 'pub').replace('draggable="true"', 'draggable="false"');
     return `<div class="zone pile" data-seat="${seat}" data-zone="${z}" data-pile="1"><div class="zl">${ZONES[z]}</div><div class="zc">${face}</div><span class="num${arr.length ? '' : ' zero'}">${arr.length}</span></div>`;
   }
   const bat = BATTLE.includes(z), fo = bat ? forceOf(arr) : null;
@@ -875,10 +934,18 @@ function zoneHtml(seat, z, cls = '') {
   const add = isPlayer() && seat === mySeat() && !['cmd', 'hangar'].includes(z) ? `<span class="zadd" data-coinzone="${z}" title="この置き場にコインやトークン（ボルジャーノンコインなど、効果で出るユニット）を置きます（カードの上に乗せるのはカードのメニューか、コインをカードへドラッグ）">＋コイン</span>` : '';
   return `<div class="zone ${cls}${bat ? ' bat' : ''}" data-seat="${seat}" data-zone="${z}"><div class="zl">${force}<span class="znm">${ZEN[z] ? `<i class="zen">${ZEN[z]}</i>` : ''}${bat ? ZONES[z].replace(/^戦闘エリア（(.+)）$/, '$1') : ZONES[z]}${arr.length ? `<span class="zcnt">${arr.length}</span>` : ''}</span>${add}</div><div class="zc">${lead}${arr.map(c => slot(c, 'pub', !!fo && c.u === fo.lead)).join('')}</div></div>`;
 }
+// 本国・捨て山はカードの束に見せる（2026-11-16）。厚みは デッキの枚数（ready の dt）に対する今の枚数の割合
+function deckTotal(seat) {
+  const s = VS.seats[seat]; if (s.dt) return s.dt;
+  let n = (seat === B.seat && B.priv ? B.priv.deck.length + B.priv.hand.length : (s.dn || 0) + (s.hn || 0));
+  Object.values(s.z).forEach(arr => arr.forEach(c => { if (!c.coin && !c.tk) n += 1 + (c.s || []).length; }));
+  return Math.max(n, 1);
+}
+const stackHtml = (seat, n, attrs = '') => n ? `<div class="slot stk" ${attrs} style="--h:${Math.min(1, n / deckTotal(seat)).toFixed(3)}" title="${n}枚（デッキ${deckTotal(seat)}枚の${Math.round(Math.min(1, n / deckTotal(seat)) * 100)}%）"><div class="mc back">GW</div></div>` : '';
 function deckPile(seat) {
   const s = VS.seats[seat], mine = seat === B.seat && B.priv;
   const n = mine ? B.priv.deck.length : s.dn;
-  return `<div class="zone pile" data-seat="${seat}" data-zone="deck" ${mine ? 'data-mydeck="1"' : ''}><div class="zl">本国</div><div class="zc">${n ? `<div class="slot" ${mine ? 'draggable="true" data-src="decktop"' : ''}><div class="mc back">GW</div></div>` : ''}</div><span class="num${n ? '' : ' zero'}">${n}</span></div>`;
+  return `<div class="zone pile" data-seat="${seat}" data-zone="deck" ${mine ? 'data-mydeck="1"' : ''}><div class="zl">本国</div><div class="zc">${stackHtml(seat, n, mine ? 'draggable="true" data-src="decktop"' : '')}</div><span class="num${n ? '' : ' zero'}">${n}</span></div>`;
 }
 function rowHtml2(seat) {
   return `<div class="bhalf${VS.active === seat ? ' active' : ''}">
@@ -901,7 +968,9 @@ const FX_RULES = [
   // 貯めG：「このカードは○国力Xを発生する。…Xの値は、このカードの上のコインの個数+1とする」
   { k: 'gpCoin', re: /国力Xを発生する。[^/]*Xの値は、このカードの上のコインの個数\+1とする/ },
   // 貯めGの「手札のユニットとコマンド以外を表にして本国の下に移す。その場合、このカードの上にコイン1個」
-  { k: 'tame', re: /手札にあるユニットとコマンド以外のカード1枚を、表にしてから持ち主の本国の下に移す。その場合、このカードの上にコイン1個を乗せる/ }
+  { k: 'tame', re: /手札にあるユニットとコマンド以外のカード1枚を、表にしてから持ち主の本国の下に移す。その場合、このカードの上にコイン1個を乗せる/ },
+  // シールド・キャノン（O-81）：セットされているユニットは +X/+X/+X。X＝場・自軍ハンガー・自軍ジャンクヤードの「名称:TR」のユニットの枚数（5まで）
+  { k: 'trBoost', re: /\+X\/\+X\/\+Xを得る。Xの値は、5を上限とする、場、自軍ハンガー、自軍ジャンクヤードにある、「名称:TR」であるユニットの枚数/ }
 ];
 const fxCache = new Map();
 function fxOf(id) {
@@ -922,6 +991,14 @@ const AUTO_FX = {
   'C-2|宝物没収': { k: 'pdraw2', d: '捨て山の上のカード2枚を引く' }
 };
 const coinCount = c => Object.values(c.cn || {}).reduce((a, b) => a + b, 0);
+// シールド・キャノンの X：場（両者の配備・戦闘エリア・リング）と、持ち主のハンガー・ジャンクヤードにある、名前に「TR」を含む表向きのユニットの枚数（5まで）
+function trCount(seat) {
+  const S = VS || B.S; if (!S) return 0;
+  const isTR = c => { const x = !c.coin && !c.f && !c.vb && c.id && BY_ID.get(c.id); return !!x && UNIT_T.includes(x.t) && /TR/.test(x.n); };
+  let n = 0;
+  S.seats.forEach((st, si) => ['deploy', ...BATTLE, ...(si === seat ? ['hangar', 'junk'] : [])].forEach(z => (st.z[z] || []).forEach(c => { if (isTR(c)) n++; })));
+  return Math.min(5, n);
+}
 // 今そのGが出している国力の数（貯めGはコインの個数+1）
 const gpAmount = (c, gp) => !c.vb && fxOf(c.id).gpCoin ? coinCount(c) + 1 : gp[1];
 const gOpen = new Set();       // 束を広げて見ている席（自分の画面だけ）
@@ -1089,6 +1166,26 @@ function castOverlay() {
   if (castMin) return `<div class="bcast min"><span class="hudtag">COMMAND</span><span>プレイ中 <b>${list.length}</b>枚：${list.map(x => '『' + esc(cname(x.c)) + '』').join('')}</span><button class="mini" data-casttog="1">大きく見る ▼</button></div>`;
   return `<div class="bcast" style="--n:${list.length}"><div class="shh"><span class="hudtag">COMMAND</span>プレイ中のカード<span class="shr">効果を解決したら「解決した」でジャンクヤードへ${list.length > 1 ? '・右から先に解決' : ''}</span><button class="mini shmin" data-casttog="1" title="盤を見たい時に畳みます">小さくする ▲</button></div><div class="zc">${cards}</div></div>`;
 }
+// 効果で送ったカード（貯めGで本国の下へ など）を盤の真ん中に。「OK」でその人の画面だけ閉じる
+let sentSeen = '';
+function sentOverlay() {
+  const T = VS.sent; if (!T || T.k === sentSeen) return '';
+  const who = esc(VS.seats[T.seat].name || `席${T.seat + 1}`);
+  const cards = T.ids.map((id, i) => `<div class="citem">${slot({ u: 'sent' + i, id }, 'pub').replace(/draggable="(true|false)"/, 'draggable="false"').replace('data-src="pub"', 'data-src="cast"')}</div>`).join('');
+  return `<div class="bcast bsent" style="--n:${T.ids.length}"><div class="shh"><span class="hudtag">${esc(T.src || 'EFFECT')}</span><b>${who}</b>が${esc(T.to)}へ送ったカード<span class="shr">表にして${esc(T.to)}へ（記録にも出ています）</span><button class="primary mini" data-sentok="${esc(T.k)}">OK</button></div><div class="zc">${cards}</div></div>`;
+}
+// ターンエンドの確認（相手に「エンド前にやることはありますか？」）
+function endOverlay() {
+  const E = VS.endAsk; if (!E) return '';
+  const me = mySeat(), ask = esc(VS.seats[E.seat].name || '手番の人'), chn = esc(VS.seats[E.ch].name || '相手');
+  let body;
+  if (isPlayer() && me === E.ch) body = E.wait
+    ? `<span class="shr">やることが済んだら押してください</span><button class="primary" data-endans="ok">済んだ（ターンエンドへ）</button>`
+    : `<button class="primary" data-endans="ok">ない（ターンエンドへ）</button><button data-endans="wait">ある（少し待って）</button>`;
+  else if (isPlayer() && me === E.seat) body = `<span class="shr">${chn}の返事を待っています${E.wait ? '（エンド前にやることがあるそうです）' : ''}</span><button class="mini" data-endans="force" title="相手がいない時など">待たずにエンド</button><button class="mini" data-endans="cancel">取りやめ</button>`;
+  else body = `<span class="shr">${chn}の返事を待っています</span>`;
+  return `<div class="bendask"><span class="hudtag">TURN END</span><div class="eq"><b>${ask}</b>がターンを終えようとしています。${me === E.ch && isPlayer() ? 'あなた' : chn}は、エンド前にやることはありますか？</div><div class="ebtn">${body}</div></div>`;
+}
 function render() {
   if (!B.S) { renderLobby(); return; }
   regTokens(B.S);
@@ -1155,12 +1252,15 @@ function render() {
     ${shownOverlay(B.role === 'spect' ? [op, me] : [op])}
     ${castOverlay()}
     ${pickOverlay()}
+    ${sentOverlay()}
+    ${endOverlay()}
     </div>
   </div>
   <div class="bside">
     <div class="binfo">
       <div>部屋コード <span class="roomcode" id="bCodeCopy" title="クリックでコピー">${esc(B.code)}</span></div>
       <div>${esc(B.name)}：${roleTxt}　観戦 ${S.spect.length}人${S.spect.length ? `（${esc(S.spect.join('、'))}）` : ''}</div>
+      <div class="hostbtn"><button id="bReload" class="ghost mini" title="卓を読み込み直します（画面がおかしい時・新しい版にする時）。同じ部屋・同じ席にそのまま入り直します">再読み込み</button><button id="bSe" class="ghost mini" title="ドローの効果音">音 ${seOn() ? 'ON' : 'OFF'}</button></div>
       ${B.role === 'host' ? `<div class="hostbtn"><button id="bRec" class="ghost mini" title="操作の記録をファイルに保存（将来の再生用）">記録を保存</button><button id="bNew" class="ghost mini">新しいゲーム</button></div>` : ''}
     </div>
     <div class="bprev" id="bPrev"><div class="note" style="align-self:center">カードに乗せると大きく出ます</div></div>
@@ -1199,6 +1299,12 @@ function wire() {
   on('bNext', () => nextPhase());
   on('bEnd', () => act({ t: 'endTurn' }));
   on('bLookOpen', () => openLook());
+  on('bSe', () => { store.set('se', seOn() ? '0' : '1'); render(); if (seOn()) drawSE(1); });
+  on('bReload', () => {
+    if (B.role === 'host' && B.conns.length && !(B.rlAsk && Date.now() - B.rlAsk < 5000)) { B.rlAsk = Date.now(); toast('あなたは部屋の管理役です。読み込み直す間、相手と観戦の人も一度切れます（相手は「入り直す」で戻れます）。もう一度押すと読み込み直します'); return; }
+    try { sessionStorage.setItem('gw.rejoin', JSON.stringify({ role: B.role, code: B.code, name: B.name, t: Date.now() })); } catch (e) {}
+    location.reload();
+  });
   on('bFxOpen', () => openFx());
   on('bDraw', () => { const n = draw(N()); render(); act({ t: 'note', msg: `${n}枚引きました` }); });
   on('bMill', () => {
@@ -1341,7 +1447,7 @@ function pubMenu(u, x, y) {
         B.priv.deck.push(takeFromHand(h.u)); savePriv();
         if (!c.r) act({ t: 'roll', u });
         act({ t: 'coin', u, name: 'コイン', d: 1 });
-        act({ t: 'note', msg: `『${cname(h)}』を表にして本国の下に移し、『${cname(c)}』にコインを1個乗せました（貯めG：${(BY_ID.get(c.id).gp || [BY_ID.get(c.id).c])[0]}国力${coinCount(c) + 2}）` });
+        act({ t: 'sent', ids: [h.id], src: cname(c), to: '本国の下', msg: `『${cname(h)}』を表にして本国の下に移し、『${cname(c)}』にコインを1個乗せました（貯めG：${(BY_ID.get(c.id).gp || [BY_ID.get(c.id).c])[0]}国力${coinCount(c) + 2}）` });
         render();
       }]), { cid: c.id });
     }], '-');
@@ -1824,6 +1930,15 @@ root.addEventListener('click', e => {
     if (e.clientX - r.left < r.width * .5 && e.clientY - r.top < r.height * .25 && !sl.classList.contains('r')) { zoomCard(sl.dataset.cid, sl.dataset.src === 'pub' ? sl.dataset.u : undefined); return; }
   }
   if (e.target.closest('#bPrev') && B.prev) { zoomCard(B.prev.cid, B.prev.u); return; }
+  const sok = e.target.closest('[data-sentok]');
+  if (sok) { sentSeen = sok.dataset.sentok; render(); return; }
+  const ea = e.target.closest('[data-endans]');
+  if (ea) {
+    const k = ea.dataset.endans;
+    if (k === 'force') act({ t: 'endTurn', force: true });
+    else act({ t: 'endAns', ok: k === 'ok', wait: k === 'wait', cancel: k === 'cancel' });
+    return;
+  }
   const ctg = e.target.closest('[data-casttog]');
   if (ctg) { castMin = !castMin; render(); return; }
   const rsv = e.target.closest('[data-resolve]');
@@ -1936,7 +2051,19 @@ root.addEventListener('drop', e => {
 // 対戦タブを開いた時に描く
 document.querySelector('nav.tabs button[data-view="battle"]').addEventListener('click', () => { if (!B.S) renderLobby(); else render(); });
 renderLobby();
+// 「再読み込み」の後：同じ部屋・同じ役でそのまま入り直す（管理役は「前の部屋を開き直す」と同じ）
+(() => {
+  let r = null;
+  try { r = JSON.parse(sessionStorage.getItem('gw.rejoin')); sessionStorage.removeItem('gw.rejoin'); } catch (e) {}
+  if (!r || Date.now() - r.t > 120e3 || !r.code) return;
+  document.querySelector('nav.tabs button[data-view="battle"]').click();
+  $('bName').value = r.name || B.name;
+  if (r.role === 'host') {
+    let saved = null; try { saved = JSON.parse(localStorage.getItem('gw.hostroom')); } catch (e) {}
+    if (saved && saved.code === r.code) createRoom(saved);
+  } else { $('bCode').value = r.code; joinRoom(r.role === 'spect' ? 'spect' : 'player'); }
+})();
 window.GWB = B; // 調べ物用
-if (LOCAL) window.GWT = { playFrom, takeFromHand, draw, render, act, castFromHand, savePriv, playFromDeck, cname, vs: () => VS };   // 試験モードだけ：画面確認の道具から操作する用
+if (LOCAL) window.GWT = { playFrom, takeFromHand, draw, render, act, castFromHand, savePriv, playFromDeck, cname, vs: () => VS, priv: () => B.priv };   // 試験モードだけ：画面確認の道具から操作する用
 window.addEventListener('gw-images', () => { if (B.S) render(); });   // みんなの画像が届いたら描き直す
 })();
