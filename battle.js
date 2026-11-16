@@ -219,12 +219,49 @@ function findCard(S, u) {
   }
   return null;
 }
+// セットは親（場に置いてあるカード）の s に平らに並べる。セット中のカードの上にさらにセットした物は on に乗せ先の u（何段でも）
+function setDesc(g, u) {   // g.s の中で u に（何段か上に）乗っているカードの u
+  const set = new Set([u]); let grow = true;
+  while (grow) { grow = false; for (const x of g.s || []) if (x.on && set.has(x.on) && !set.has(x.u)) { set.add(x.u); grow = true; } }
+  set.delete(u); return set;
+}
+function takeOut(f) {      // findCard の結果を場から抜く → [カード, そのカードに乗っていた物...]（乗っていた物は on をカードに合わせる）
+  const card = f.c; let subs;
+  if (f.parent) { const d = setDesc(f.parent, card.u); subs = f.parent.s.filter(x => d.has(x.u)); f.parent.s = f.parent.s.filter(x => x !== card && !d.has(x.u)); }
+  else { f.arr.splice(f.i, 1); subs = card.s || []; }
+  card.s = []; delete card.on;
+  subs.forEach(x => { if (!x.on) x.on = card.u; });
+  return [card, ...subs];
+}
+function putOnto(t, cards) {   // cards をカード t（findCard の結果）にセット。t がセット中のカードなら、その上に乗せる（何段でも）
+  const g = t.parent || t.c; if (!g.s) g.s = [];
+  const inside = new Set(cards.map(c => c.u));
+  cards.forEach(c => {
+    c.s = [];
+    if (c.on && inside.has(c.on)) return;   // 一緒に動くカードの上に乗っている物はそのまま
+    if (t.parent) c.on = t.c.u; else delete c.on;
+  });
+  let at = g.s.length;
+  if (t.parent) { const d = setDesc(g, t.c.u); at = g.s.indexOf(t.c) + 1; g.s.forEach((x, i) => { if (d.has(x.u)) at = Math.max(at, i + 1); }); }
+  g.s.splice(at, 0, ...cards);
+  return g;
+}
+function flatSets(S) {      // 前の不具合（セット中のカードにセットすると、その下に入って見えなくなった）で埋もれた物を平らに戻す
+  S.seats.forEach(st => Object.values(st.z).forEach(arr => arr.forEach(g => {
+    if (!(g.s || []).some(x => (x.s || []).length)) return;
+    const out = [];
+    const walk = (x, on) => { const k = x.s || []; x.s = []; if (on && on !== g.u) x.on = on; out.push(x); k.forEach(y => walk(y, x.u)); };
+    g.s.forEach(x => walk(x, x.on));
+    g.s = out;
+  })));
+}
 function log(msg, cls = '') { const S = B.S; S.log.push({ m: msg, c: cls }); if (S.log.length > 300) S.log.splice(0, S.log.length - 300); }
 const zoneLabel = (seat, z) => (B.S.seats[seat].name || `席${seat + 1}`) + 'の' + ZONES[z];
 
 function apply(a, who) {
   if (a.t !== 'counts') { B.rec.push({ t: Date.now(), seat: who.seat, name: who.name, a: JSON.parse(JSON.stringify(a)) }); if (B.rec.length > 5000) B.rec.shift(); }
   const S = B.S, nm = who.name || '？';
+  flatSets(S);
   const seatObj = who.seat != null ? S.seats[who.seat] : null;
   if (a.t === 'chat') { log(`${nm}：${String(a.msg).slice(0, 200)}`, 'chat'); return; }
   if (!seatObj) return '観戦者は操作できません';
@@ -238,7 +275,7 @@ function apply(a, who) {
       const cards = a.cards.map(c => ({ u: c.u, id: c.id, o: who.seat, r: false, f: !!a.f && !PILES.includes(a.zone), s: [], ...(a.vb && a.zone === 'deploy' ? { vb: true } : {}) }));
       if (a.vb && a.zone === 'deploy') { log(`${nm}が${a.src === 'hand' ? '手札' : '本国'}の『${cname(cards[0])}』をヴァリアブルで配備エリアへ（逆向き・${(BY_ID.get(cards[0].id) || {}).c || ''}の特殊G、Gのプレイとして）`); tz.push(...cards); return; }
       let onto = null;
-      if (a.onto) { const t = findCard(S, a.onto); if (t && !t.c.coin) { onto = t.c; t.c.s.push(...cards); } else tz.push(...cards); }
+      if (a.onto) { const t = findCard(S, a.onto); if (t && !t.c.coin) { onto = t.c; putOnto(t, cards); } else tz.push(...cards); }
       else tz.push(...cards);
       const from = a.src === 'deck' ? '本国の上から' : '手札から';
       const names = cards.length > 3 || SECRET.includes(a.zone) ? `${cards.length}枚` : cards.map(c => `『${c.f ? '裏向きのカード' : cname(c)}』`).join('');
@@ -261,8 +298,8 @@ function apply(a, who) {
       const fx = !a.how && AUTO_FX[f.c.id], fxSeat = fx && fx.k === 'draw2' && S.seats[a.ds] ? a.ds | 0 : f.c.o;
       if (fx && !canReach(fxSeat)) return `${S.seats[fxSeat].name || '持ち主'}がいないので自動では解決できません（「手で解決」を使ってください）`;
       f.arr.splice(f.i, 1);
-      const c = f.c; [c, ...(c.s || [])].forEach(x => { x.r = false; x.f = false; x.s = []; delete x.cn; delete x.tm; delete x.at; delete x.pay; });
-      S.seats[c.o].z.junk.push(c);
+      const c = f.c, cs = [c, ...(c.s || [])]; cs.forEach(x => { x.r = false; x.f = false; x.s = []; delete x.on; delete x.cn; delete x.tm; delete x.at; delete x.pay; });
+      cs.forEach(x => S.seats[x.o].z.junk.push(x));
       log(`${nm}が『${cname(c)}』を${a.how === 'cut' ? '打ち消されたものとして' : fx ? '解決し（自動）、' : '解決し、'}ジャンクヤードへ`);
       if (fx) autoHost(fx, c, fxSeat);
       return;
@@ -297,7 +334,7 @@ function apply(a, who) {
     case 'move': {    // 場から場へ
       const f = findCard(S, a.u); if (!f) return;
       const tz = S.seats[a.seat]?.z[a.zone]; if (!tz && !a.onto) return;
-      if (a.onto) { if (a.onto === a.u || (f.c.s || []).some(x => x.u === a.onto)) return; }
+      if (a.onto) { if (a.onto === a.u || (f.c.s || []).some(x => x.u === a.onto) || (f.parent && setDesc(f.parent, a.u).has(a.onto))) return; }
       if (f.c.coin) {   // 場のコイン：カードに乗せる／捨て札置き場へ動かすと消える／ほかの置き場へ
         const tc = a.onto && findCard(S, a.onto);
         if (a.onto && (!tc || (tc.c.coin && tc.c.coin !== f.c.coin))) return;
@@ -310,16 +347,17 @@ function apply(a, who) {
         return;
       }
       if (a.onto) { const tc = findCard(S, a.onto); if (tc && tc.c.coin) return; }   // コインの下にはセットしない
-      f.arr.splice(f.i, 1);
-      const card = f.c, subs = card.s || []; card.s = [];
+      const t0 = a.onto && findCard(S, a.onto); if (a.onto && !t0) return;
+      const moved = takeOut(f), card = moved[0], subs = moved.slice(1);
       if (a.onto) {
         const t = findCard(S, a.onto); if (!t) { tz.push(card); return; }
-        card.v = false; card.vb = false; t.c.s.push(card, ...subs);
-        log(`${nm}が『${cname(card)}』を『${cname(t.c)}』にセット`);
+        card.v = false; card.vb = false; putOnto(t, moved);
+        log(`${nm}が『${cname(card)}』${subs.length ? `（乗っていた${subs.length}枚ごと）` : ''}を『${cname(t.c)}』${t.parent ? `（『${cname(t.parent)}』のセット）` : ''}にセット`);
         return;
       }
+      subs.forEach(x => { if (x.on === card.u) delete x.on; });
       if (PILES.includes(a.zone)) {   // 捨て札置き場へは表向き・リロール状態で、セットしていたカードも一緒に
-        [card, ...subs].forEach(c => { c.r = false; c.f = false; c.v = false; c.vb = false; c.s = []; delete c.cn; delete c.tm; if (!c.tk) tz.push(c); });   // トークンは場を離れると消える
+        [card, ...subs].forEach(c => { c.r = false; c.f = false; c.v = false; c.vb = false; c.s = []; delete c.on; delete c.cn; delete c.tm; if (!c.tk) tz.push(c); });   // トークンは場を離れると消える
         log(`${nm}が『${cname(card)}』${subs.length ? `（セット${subs.length}枚ごと）` : ''}を${card.tk ? '取り除きました（トークンは場を離れると消えます）' : zoneLabel(a.seat, a.zone) + 'へ'}`);
       } else {
         card.s = subs; if (card.vb && !['deploy', 'G'].includes(a.zone)) card.vb = false; tz.push(card);
@@ -330,10 +368,11 @@ function apply(a, who) {
     case 'leave': {   // 場から持ち主の手札・本国へ
       const f = findCard(S, a.u); if (!f) return;
       if (f.c.coin) { f.arr.splice(f.i, 1); log(`${nm}が『${f.c.coin}』${f.c.n}枚を取り除きました`); return; }
-      const all = [f.c, ...(f.c.s || [])].filter(c => !c.tk);   // トークンは手札・本国へ行かず消える
+      const grp = f.parent ? [f.c, ...f.parent.s.filter(x => setDesc(f.parent, f.c.u).has(x.u))] : [f.c, ...(f.c.s || [])];
+      const all = grp.filter(c => !c.tk);   // トークンは手札・本国へ行かず消える
       const owners = new Set(all.map(c => c.o));
       for (const o of owners) if (!canReach(o)) return `${S.seats[o].name || '持ち主'}がいないので動かせません`;
-      f.arr.splice(f.i, 1);
+      takeOut(f);
       all.forEach(c => sendGain(c.o, { u: c.u, id: c.id }, a.to));
       const where = { hand: '手札', top: '本国の上', bottom: '本国の下' }[a.to];
       if (f.c.tk) { log(`${nm}がトークン『${cname(f.c)}』を取り除きました${all.length ? `（セットしていた${all.length}枚は持ち主の${where}へ）` : ''}`); return; }
@@ -347,7 +386,7 @@ function apply(a, who) {
       const n = Math.max(1, Math.min(10, a.n | 0 || 1));
       const cards = Array.from({ length: n }, () => ({ u: rid() + rid(), id: d.id, o: who.seat, r: !!a.r, f: false, s: [], tk: 1 }));
       const t = a.onto && findCard(S, a.onto);
-      if (t && !t.c.coin) t.c.s.push(...cards);
+      if (t && !t.c.coin) putOnto(t, cards);
       else if (a.at > 0) tz.splice(Math.min(tz.length, a.at - 1), 0, ...cards);
       else tz.push(...cards);
       log(`${nm}が${t && !t.c.coin ? `『${cname(t.c)}』に` : zoneLabel(seat, a.zone) + 'に'}トークン『${d.n}』（${d.st.join('/')}）を${n}個出しました${a.at > 0 && !t ? `（${a.at}番目）` : ''}${a.r ? '（ロール状態）' : ''}`);
@@ -814,7 +853,8 @@ function forceOf(arr) {
 function slot(c, src, lead = false) {
   if (c.coin) return `<div class="slot ctok" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" data-coin="1" title="${esc(c.coin)} ${c.n}枚（カードに落とすと乗せます）"><div class="mc ctk"><span>${esc(c.coin.replace(/コイン$/, '') || 'コイン')}</span><b>×${c.n}</b></div></div>`;
   const known = c.id && BY_ID.get(c.id);
-  const subs = (c.s || []).map(x => `<div class="sub${x.r ? ' r' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(x.u)}" ${x.id ? `data-cid="${esc(x.id)}"` : ''} title="セットしているカード。押すとこのカードだけ動かせます（手札・本国・捨て山など）">${esc(x.f && !x.id ? '裏向き' : cname(x))}${Object.keys(x.cn || {}).length ? ` ●${Object.values(x.cn).reduce((a, b) => a + b, 0)}` : ''}${x.tm ? ` <span class="tms" title="${esc(tmTitle(x.tm))}">${esc(tmLabel(x.tm))}</span>` : ''}</div>`).join('');
+  const depth = x => { let d = 0, y = x; while (y && y.on && d < 20) { y = (c.s || []).find(z => z.u === y.on); d++; } return d; };
+  const subs = (c.s || []).map(x => { const on = x.on && (c.s || []).find(z => z.u === x.on), dp = depth(x); return `<div class="sub${x.r ? ' r' : ''}${dp ? ' on' : ''}" style="${dp ? `--dp:${dp}` : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(x.u)}" ${x.id ? `data-cid="${esc(x.id)}"` : ''} title="${on ? `『${esc(on.f && !on.id ? '裏向きのカード' : cname(on))}』の上にセットしているカード` : 'セットしているカード'}。押すとこのカードだけ動かせます（手札・本国・捨て山など）。このカードの上にさらにセットするには、ここへ落とします">${dp ? '↳'.repeat(Math.min(dp, 3)) : ''}${esc(x.f && !x.id ? '裏向き' : cname(x))}${Object.keys(x.cn || {}).length ? ` ●${Object.values(x.cn).reduce((a, b) => a + b, 0)}` : ''}${x.tm ? ` <span class="tms" title="${esc(tmTitle(x.tm))}">${esc(tmLabel(x.tm))}</span>` : ''}</div>`; }).join('');
   const tot = !c.f ? groupStats(c) : null;
   const v = c.v && !c.f && known && known.alt;
   const tmc = hasTm(c) ? ' tm' : '';
@@ -1010,7 +1050,9 @@ function shownRow(seat, big) {
   const rest = Math.max(0, s.hn - sh.c.length);
   const canPt = isPlayer() && seat !== mySeat();
   const who = esc(s.name || `席${seat + 1}`);
-  const cards = sh.c.map(c => slot({ u: c.u, id: c.id }, 'shown').replace(/draggable="(true|false)"/, 'draggable="false"').replace('class="slot', `data-seat="${seat}" class="slot${sh.pt === c.u ? ' pt' : ''}`)).join('')
+  // 「指定」ボタンはカードの下に直接（2026-11-16：メニューを開かなくても押せるように。Edge で指定できなかった件）
+  const ptb = c => canPt ? `<button class="mini ptbtn${sh.pt === c.u ? ' on' : ''}" data-ptbtn="${esc(c.u)}" data-seat="${seat}">${sh.pt === c.u ? '指定を外す' : '指定する'}</button>` : '';
+  const cards = sh.c.map(c => `<div class="shcard">${slot({ u: c.u, id: c.id }, 'shown').replace(/draggable="(true|false)"/, 'draggable="false"').replace('class="slot', `data-seat="${seat}" class="slot${sh.pt === c.u ? ' pt' : ''}`)}${ptb(c)}</div>`).join('')
     + (rest ? `<div class="slot"><div class="mc back">裏<br>×${rest}</div></div>` : '');
   const cnt = `<span class="shn">${sh.c.length}</span>枚${rest ? `<span class="shr">（ほかに裏 ${rest}枚）</span>` : '<span class="shr">（全部）</span>'}`;
   if (big) return `<div class="bshown big" style="--n:${sh.c.length + (rest ? 1 : 0)}"><div class="shh"><span class="hudtag">OPEN HAND</span><b>${who}</b>の手札を公開中　${cnt}${canPt ? '<span class="shhint">押すと指定（ハンデスなど）・乗せると右に大きく</span>' : ''}<button class="mini shmin" data-shtog="${seat}" title="1行に畳みます（公開中のカードが変わるとまた大きく出ます）">小さくする ▲</button></div>
@@ -1074,11 +1116,11 @@ function render() {
       ctl = (S.active == null ? `<button id="bFirst" class="primary">自分が先攻</button><button id="bFirstR">先攻をランダムで決める</button>`
           : '') + `
         <input type="number" id="bN" min="1" max="50" value="${esc(nVal)}" title="枚数"><span>枚を</span>
-        <button id="bDraw">引く</button><button id="bMill" title="戦闘ダメージ・資源など">本国→捨て山</button><button id="bHeal" title="回復：捨て山の上から枚数ぶんを、裏向きのまま1枚ずつ本国の上へ">回復</button><button id="bLook" title="サーチ：上から見て選び、残りを上か下へ好きな順で戻す">上から見る</button>
+        <button id="bDraw">引く</button><button id="bMill" title="戦闘ダメージ・資源など">本国→捨て山</button><button id="bBanish" title="本国の上から枚数ぶんを表向きで除外へ">本国→除外</button><button id="bHeal" title="回復：捨て山の上から枚数ぶんを、裏向きのまま1枚ずつ本国の上へ">回復</button><button id="bLook" title="サーチ：上から見て選び、残りを上か下へ好きな順で戻す">上から見る</button>
         ${B.priv.look?.length ? `<button id="bLookOpen" class="primary">見ているカード（${B.priv.look.length}）</button>` : ''}
         ${B.priv.fx && B.priv.fx.t !== 'brief' ? `<button id="bFxOpen" class="primary">『${esc(B.priv.fx.src)}』の続き</button>` : ''}
         <span class="sep"></span>
-        <button id="bShuffle">本国を切る</button><button id="bSearch">本国を全部見る</button><button id="bReroll">全リロール</button>${showing ? '<button id="bShowOff2">手札の公開を終える</button>' : '<button id="bShowAll" title="公開を終えるまで、相手と観戦に手札が見えます（あとで引いたカードは見せません）">手札を公開</button>'}`;
+        <button id="bShuffle">本国を切る</button><button id="bSearch">本国を全部見る</button><button id="bReroll">全リロール</button><button id="bRandH" title="手札から枚数ぶんを無作為に選びます（無作為に廃棄する効果など）。選んだ後にどこへ移すか決めます">手札から無作為に</button>${showing ? '<button id="bShowOff2">手札の公開を終える</button>' : '<button id="bShowAll" title="公開を終えるまで、相手と観戦に手札が見えます（あとで引いたカードは見せません）">手札を公開</button>'}`;
     }
   } else ctl = `<span class="note">観戦中です。カードに乗せると右に大きく出ます。</span>`;
 
@@ -1164,6 +1206,13 @@ function wire() {
     const got = B.priv.deck.splice(0, N()); savePriv();
     if (got.length) act({ t: 'enter', cards: got, zone: 'discard', src: 'deck' });
   });
+  on('bBanish', () => {
+    if (!online()) return toast('つながっていません');
+    const got = B.priv.deck.splice(0, N()); savePriv();
+    if (!got.length) return toast('本国がありません');
+    act({ t: 'enter', cards: got, zone: 'removed', src: 'deck' });
+  });
+  on('bRandH', e => randomHand(N(), e));
   on('bHeal', () => {
     if (!online()) return toast('つながっていません');
     if (!VS.seats[mySeat()].z.discard.length) return toast('捨て山がありません');
@@ -1304,10 +1353,11 @@ function pubMenu(u, x, y) {
   if (c.tm) items.push(['一時修正を消す', () => act({ t: 'tmod', u })]);
   menu(x, y, cname(c) + (mine ? '' : `（${B.S.seats[owner].name}のカード）`), items, { cid: c.id, u });
 }
-function handMenu(u, x, y) {
+function handMenu(u, x, y, title, first) {
   const c = B.priv.hand.find(c => c.u === u); if (!c) return;
   const x0 = BY_ID.get(c.id), isCmd = x0 && x0.t === 'C';
-  menu(x, y, cname(c), [
+  menu(x, y, title || cname(c), [
+    ...first ? [...first, '-'] : [],
     ...isCmd ? [[castLabel(x0), () => castFromHand(u)], '-'] : [],
     ...variN(BY_ID.get(c.id)) ? [[`ヴァリアブル(${variN(BY_ID.get(c.id))})：配備エリアへ逆向きで出す（${BY_ID.get(c.id).c}の特殊G・Gのプレイ）`, () => playFromHand(u, 'deploy', { vb: true })], '-'] : [],
     ...['deploy', 'G', 'space', 'earth', 'hangar'].map(z => [`${ZONES[z]}へ出す`, () => playFromHand(u, z)]),
@@ -1321,6 +1371,32 @@ function handMenu(u, x, y) {
     ['本国の上に戻す', () => { B.priv.deck.unshift(takeFromHand(u)); savePriv(); render(); act({ t: 'note', msg: '手札を1枚本国の上に戻しました' }); }],
     ['本国の下に戻す', () => { B.priv.deck.push(takeFromHand(u)); savePriv(); render(); act({ t: 'note', msg: '手札を1枚本国の下に戻しました' }); }]
   ], { cid: c.id, u });
+}
+// 手札から無作為に n 枚選ぶ（無作為に廃棄する効果など）。選んだことを先に記録に出してから、移す先を決める
+function randomHand(n, e) {
+  if (!B.priv || !online()) return toast('つながっていません');
+  const hand = B.priv.hand.slice(); if (!hand.length) return toast('手札がありません');
+  const rnd = k => { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0] % k; };
+  for (let i = hand.length - 1; i > 0; i--) { const j = rnd(i + 1); [hand[i], hand[j]] = [hand[j], hand[i]]; }
+  const got = hand.slice(0, Math.min(n, hand.length)), us = got.map(c => c.u);
+  act({ t: 'note', msg: `手札${B.priv.hand.length}枚から無作為に${got.length}枚選びました` });
+  const r = e && e.target && e.target.getBoundingClientRect ? e.target.getBoundingClientRect() : { left: innerWidth / 2, top: innerHeight / 2 };
+  const x = r.left, y = r.top - 10;
+  const send = (zone, label) => {
+    if (!online()) return toast('つながっていません');
+    const cards = us.map(takeFromHand).filter(Boolean); if (!cards.length) return;
+    savePriv(); render(); act({ t: 'enter', cards, zone, src: 'hand' });
+  };
+  const items = [
+    [`${ZONES.junk}へ（廃棄）`, () => send('junk')],
+    [`${ZONES.discard}へ`, () => send('discard')],
+    [`${ZONES.removed}へ`, () => send('removed')], '-',
+    ['公開する（公開したまま）', () => setShow([...new Set([...(B.priv.show || []), ...us])], false)],
+    ['本国の下に戻す', () => { us.map(takeFromHand).filter(Boolean).forEach(c => B.priv.deck.push(c)); savePriv(); render(); act({ t: 'note', msg: `無作為に選んだ手札${us.length}枚を本国の下に戻しました` }); }],
+    ['手札に残す（選んだだけ）', () => {}]
+  ];
+  if (got.length === 1) return handMenu(got[0].u, x, y, `無作為に選んだ手札：『${cname(got[0])}』`, items);
+  menu(x, y, `無作為に選んだ手札${got.length}枚：${got.map(c => `『${cname(c)}』`).join('')}`, items);
 }
 function deckCardMenu(u, x, y, after) {
   const c = B.priv.deck.find(c => c.u === u); if (!c) return;
@@ -1740,7 +1816,9 @@ function checkReveal(S) {
 root.addEventListener('click', e => {
   if (!B.S || ctx.contains(e.target)) return;
   // カードの左上（「詳細」の印）を押すと、メニューを出さずに「詳しく見る」。右の大きい表示を押しても同じ
-  const mc = e.target.closest('.slot[data-cid] > .mc:not(.back)');
+  const ptb = e.target.closest('[data-ptbtn]');
+  if (ptb) { if (isPlayer()) act({ t: 'point', seat: +ptb.dataset.seat, u: ptb.dataset.ptbtn }); return; }
+  const mc = e.target.closest('.slot[data-cid]:not([data-src="shown"]) > .mc:not(.back)');
   if (mc) {
     const r = mc.getBoundingClientRect(), sl = mc.parentNode;
     if (e.clientX - r.left < r.width * .5 && e.clientY - r.top < r.height * .25 && !sl.classList.contains('r')) { zoomCard(sl.dataset.cid, sl.dataset.src === 'pub' ? sl.dataset.u : undefined); return; }
@@ -1772,7 +1850,9 @@ root.addEventListener('click', e => {
       ['上の1枚を見る', () => { act({ t: 'note', msg: '本国の上1枚を見ました' }); openDeckView(1); }],
       ['全部見る', () => { act({ t: 'note', msg: '本国を全部見ました' }); openDeckView(0); }],
       ['切る', () => { shuffle(B.priv.deck); savePriv(); act({ t: 'note', msg: '本国を切りました' }); }],
-      ['上の1枚を捨て山へ', () => { const g = B.priv.deck.splice(0, 1); savePriv(); if (g.length) act({ t: 'enter', cards: g, zone: 'discard', src: 'deck' }); }]
+      ['上の1枚を捨て山へ', () => { const g = B.priv.deck.splice(0, 1); savePriv(); if (g.length) act({ t: 'enter', cards: g, zone: 'discard', src: 'deck' }); }],
+      ['上の1枚を除外', () => { const g = B.priv.deck.splice(0, 1); savePriv(); if (g.length) act({ t: 'enter', cards: g, zone: 'removed', src: 'deck' }); }],
+      ...N() > 1 ? [[`上から${N()}枚を除外`, () => { const g = B.priv.deck.splice(0, N()); savePriv(); if (g.length) act({ t: 'enter', cards: g, zone: 'removed', src: 'deck' }); }]] : []
     ]);
     return;
   }
