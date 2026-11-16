@@ -1365,15 +1365,47 @@ function showPrev(cid, u) {
 }
 // 「詳しく見る」：画面いっぱいに大きく出す。どこかを押すか Esc で戻る
 const zoomEl = document.createElement('div'); zoomEl.className = 'bzoom';
+let zoomAt = null;   // 詳しく見るで出しているカード（Ctrl+V で画像を入れる先）
 function zoomCard(cid, u) {
   const h = prevHtml(cid, u); if (h == null) return;
+  zoomAt = { cid, u };
   const host = document.querySelector('dialog[open]') || document.body; if (zoomEl.parentNode !== host) host.appendChild(zoomEl);
-  zoomEl.innerHTML = `<div class="zin">${h}</div><div class="zhint">押すか Esc で戻ります</div>`;
+  zoomEl.innerHTML = `<div class="zin">${h}</div><div class="zhint">押すか Esc で戻ります　／　Ctrl+V でコピーした画像をこのカードの画像にします</div>`;
   zoomEl.classList.add('on');
   const zin = zoomEl.firstChild, w = zin.offsetWidth, hh = zin.offsetHeight;
   zin.style.zoom = Math.max(1, Math.min((innerWidth * .96) / w, (innerHeight * .92) / hh)).toFixed(3);
 }
-function zoomClose() { zoomEl.classList.remove('on'); zoomEl.innerHTML = ''; }
+function zoomClose() { zoomEl.classList.remove('on'); zoomEl.innerHTML = ''; zoomAt = null; }
+// 対戦中のカードに画像を入れる（デッキ構築のカード詳細と同じ置き場。カード番号 id ごと）
+async function battleSetImage(cid, blob) {
+  const c = BY_ID.get(cid); if (!c || !blob) return;
+  await setImageFor(cid, blob);
+  if (B.S) render();
+  if (zoomAt && zoomAt.cid === cid) zoomCard(zoomAt.cid, zoomAt.u);
+  if (B.prev && B.prev.cid === cid) showPrev(B.prev.cid, B.prev.u);
+}
+async function battlePasteImage(cid) {
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.read) throw new Error('read なし');
+    for (const it of await navigator.clipboard.read()) {
+      const ty = it.types.find(t => t.startsWith('image/'));
+      if (ty) { await battleSetImage(cid, await it.getType(ty)); return; }
+    }
+    toast('クリップボードに画像がありません（画像を右クリック→「画像をコピー」してから）');
+  } catch (err) { toast('このブラウザでは読めませんでした。「詳しく見る」を開いて Ctrl+V で貼ってください'); }
+}
+const imgPick = document.createElement('input'); imgPick.type = 'file'; imgPick.accept = 'image/*'; imgPick.style.display = 'none';
+document.body.appendChild(imgPick);
+function battlePickImage(cid) {
+  imgPick.onchange = () => { const f = imgPick.files[0]; imgPick.value = ''; if (f) battleSetImage(cid, f); };
+  imgPick.click();
+}
+document.addEventListener('paste', e => {
+  if (!zoomAt || !zoomEl.classList.contains('on')) return;
+  const it = [...(e.clipboardData?.items || [])].find(i => i.kind === 'file' && i.type.startsWith('image/'));
+  if (!it) { toast('クリップボードに画像がありません'); return; }
+  e.preventDefault(); battleSetImage(zoomAt.cid, it.getAsFile());
+});
 zoomEl.onclick = zoomClose;
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && zoomEl.classList.contains('on')) { e.preventDefault(); e.stopPropagation(); zoomClose(); } }, true);
 root.addEventListener('mouseover', e => {
@@ -1385,7 +1417,8 @@ root.addEventListener('mouseover', e => {
 // クリックメニュー
 const ctx = document.createElement('div'); ctx.id = 'bctx'; document.body.appendChild(ctx);
 function menu(x, y, title, items, zoom) {
-  if (zoom && zoom.cid && BY_ID.has(zoom.cid)) items = [['詳しく見る', () => zoomCard(zoom.cid, zoom.u)], ...items.length ? ['-'] : [], ...items];
+  if (zoom && zoom.cid && BY_ID.has(zoom.cid)) items = [['詳しく見る', () => zoomCard(zoom.cid, zoom.u)], ...items.length ? ['-'] : [], ...items,
+    '-', ['画像を貼る（コピーした画像）', () => battlePasteImage(zoom.cid)], ['画像をファイルから選ぶ…', () => battlePickImage(zoom.cid)]];
   const host = document.querySelector('dialog[open]') || document.body; if (ctx.parentNode !== host) host.appendChild(ctx);
   ctx.innerHTML = `<div class="hd">${esc(title)}</div>` + items.map((it, i) => it === '-' ? '<hr>' : `<button data-i="${i}">${esc(it[0])}</button>`).join('');
   ctx.classList.add('on');

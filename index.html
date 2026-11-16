@@ -52,6 +52,13 @@ main{height:calc(100% - 48px)}
 .crow .act{grid-column:3;grid-row:1/3;display:flex;align-items:center;gap:4px}
 .crow .act button{width:30px;height:30px;padding:0;font-size:16px;line-height:1}
 .crow .have{min-width:18px;text-align:center;color:var(--accent);font-weight:700}
+.crow .act button.fav{border-color:transparent;background:transparent;color:#6a7080;font-size:18px}
+.crow .act button.fav.on{color:#ffcf4a}
+.chip.mode{opacity:1;border-style:dashed}
+.chip.mode.and{border-style:solid;border-color:var(--accent);color:var(--accent)}
+.chip.favc.on{color:#ffcf4a}
+#bdReload{margin-left:auto;font-size:12px;padding:3px 10px}
+body:not(.vbuilder) #bdReload{display:none}
 .more{display:block;margin:10px auto}
 .tbadge{display:inline-block;font-size:11px;padding:0 5px;border-radius:3px;background:#2d3240;color:#c9cfdb;margin-right:6px;vertical-align:1px}
 
@@ -132,6 +139,7 @@ dialog .row{justify-content:flex-end;margin-top:10px}
   #builder:not(.showdeck) #deckPane{display:none}
   #builder.showdeck #searchPane{display:none}
   .mobonly{display:inline-block}
+  header{gap:6px;padding:8px 10px} header h1{font-size:14px;white-space:nowrap} nav.tabs button,#bdReload{white-space:nowrap} .pconly{display:none}
   .row input[type=search]{flex:1 1 100px}
   #sort{width:96px}
   .fmore{display:none}
@@ -150,15 +158,16 @@ dialog .row{justify-content:flex-end;margin-top:10px}
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=M+PLUS+1:wght@500;700;800&display=swap">
-<link rel="stylesheet" href="battle.css?v=20261116h">
+<link rel="stylesheet" href="battle.css?v=20261117a">
 </head>
-<body>
+<body class="vbuilder">
 <header>
   <h1>GUNDAM WAR <span>卓</span></h1>
   <nav class="tabs">
     <button data-view="builder" class="on">デッキ構築</button>
     <button data-view="battle">対戦</button>
   </nav>
+  <button id="bdReload" class="ghost" title="デッキ構築の画面を読み込み直します（新しい版にする時・画面がおかしい時）。検索の条件はそのまま残ります"><span class="pconly">再読み込み</span><span class="mobonly">↻</span></button>
 </header>
 <main>
   <!-- ===== デッキ構築 ===== -->
@@ -470,14 +479,22 @@ function cardFace(c, opt = {}) {
 // =====================================================================
 //  検索
 // =====================================================================
-const F = { q: '', colors: new Set(), types: new Set(), cmin: null, cmax: null, set: '', sort: 'no' };
+const F = { q: '', colors: new Set(), cand: false, types: new Set(), fav: false, cmin: null, cmax: null, set: '', sort: 'no' };
+// よく使うカード（★）：このブラウザに id の一覧で保存。色の絞り込みと合わせると「その色のよく使うカード」になる
+const favs = new Set(store.get('favs', []));
+function toggleFav(id) {
+  favs.has(id) ? favs.delete(id) : favs.add(id);
+  store.set('favs', [...favs]); renderAll(true);
+}
+// カードの色：本来の色＋デュアルカードの2色目（ダブルオーの「任意」は色に数えない）
+const cardColors = c => c.d && c.d[0] !== '任意' ? [c.c, c.d[0]] : [c.c];
 let shown = 150;
 const $ = id => document.getElementById(id);
 
 function chips(el, items, set, render) {
   el.innerHTML = items.map(([v, label]) => `<button class="chip" data-v="${esc(v)}">${label}</button>`).join('');
   el.onclick = e => {
-    const b = e.target.closest('.chip'); if (!b) return;
+    const b = e.target.closest('.chip'); if (!b || b.dataset.v == null) return;
     const v = b.dataset.v;
     set.has(v) ? set.delete(v) : set.add(v);
     b.classList.toggle('on', set.has(v));
@@ -486,6 +503,13 @@ function chips(el, items, set, render) {
 }
 chips($('colorChips'), COLORS.map(c => [c, `<span class="dot" style="background:var(--c-${c})"></span>${c}`]), F.colors, renderResults);
 chips($('typeChips'), TYPES.map(([v, l]) => [v, l]), F.types, renderResults);
+// 色の「どれか／全部含む」の切り替え。全部含む＝選んだ色を全部持つカードだけ（黒と紫を選ぶと黒紫のデュアルカード）
+$('colorChips').insertAdjacentHTML('afterbegin', '<button class="chip mode" id="colorMode"></button>');
+const colorModeLabel = () => { const b = $('colorMode'); b.classList.toggle('and', F.cand); b.textContent = F.cand ? '色：全部含む' : '色：どれか'; b.title = F.cand ? '選んだ色を全部持つカードだけ出します（例：黒と紫→黒紫のデュアルカード）。押すと「どれか」に戻ります' : '選んだ色のどれかのカードを出します。押すと「全部含む」（かつ）になります'; };
+colorModeLabel();
+$('colorMode').onclick = () => { F.cand = !F.cand; colorModeLabel(); shown = 150; renderResults(); };
+$('typeChips').insertAdjacentHTML('afterbegin', '<button class="chip favc" id="favChip" title="★を付けたカードだけ出します。色と合わせると、その色のよく使うカードになります">★よく使う</button>');
+$('favChip').onclick = () => { F.fav = !F.fav; $('favChip').classList.toggle('on', F.fav); shown = 150; renderResults(); };
 
 const allSets = [...new Set(CARDS.flatMap(c => c.s))];
 $('setSel').innerHTML += allSets.map(s => `<option>${esc(s)}</option>`).join('');
@@ -493,7 +517,8 @@ $('setSel').innerHTML += allSets.map(s => `<option>${esc(s)}</option>`).join('')
 function filtered() {
   const words = norm(F.q).split(/\s+/).filter(Boolean);
   let r = CARDS.filter(c =>
-    (!F.colors.size || F.colors.has(c.c) || (c.d && F.colors.has(c.d[0]))) &&
+    (!F.colors.size || (F.cand ? [...F.colors].every(x => cardColors(c).includes(x)) : cardColors(c).some(x => F.colors.has(x)))) &&
+    (!F.fav || favs.has(c.id)) &&
     (!F.types.size || F.types.has(c.t)) &&
     (F.cmin == null || total(c) >= F.cmin) &&
     (F.cmax == null || (total(c) >= 0 && total(c) <= F.cmax)) &&
@@ -511,7 +536,7 @@ function rowHtml(c, n, deckMode) {
   return `<div class="crow" data-id="${esc(c.id)}">
     <div class="bar" style="background:var(--c-${c.c})"></div>
     <div class="nm"><span class="tbadge">${esc(TYPE_NAME[c.t] || c.t)}</span>${c.t === 'U' && c.m ? `<span class="note">${esc(c.m)}　</span>` : ''}${esc(c.n)}</div>
-    <div class="act">${n || deckMode ? `<button class="pc" data-d="-1">−</button><span class="have">${n || ''}</span>` : ''}<button data-d="1" ${deckMode ? 'class="pc"' : ''}>＋</button></div>
+    <div class="act"><button class="fav${favs.has(c.id) ? ' on' : ''}" data-fav title="${favs.has(c.id) ? 'よく使うから外す' : 'よく使うに登録'}">${favs.has(c.id) ? '★' : '☆'}</button>${n || deckMode ? `<button class="pc" data-d="-1">−</button><span class="have">${n || ''}</span>` : ''}<button data-d="1" ${deckMode ? 'class="pc"' : ''}>＋</button></div>
     <div class="meta">${esc(meta)}</div>
   </div>`;
 }
@@ -521,7 +546,7 @@ function renderResults() {
   const d = cur().cards;
   $('results').innerHTML = r.slice(0, shown).map(c => rowHtml(c, d[c.id] || 0)).join('') +
     (r.length > shown ? `<button class="more" id="moreBtn">さらに表示（残り${r.length - shown}件）</button>` : '') +
-    (r.length ? '' : '<div class="empty">該当するカードがありません</div>');
+    (r.length ? '' : `<div class="empty">${F.fav && !favs.size ? 'よく使うカードはまだありません。カードの行の ☆ を押すと登録できます' : '該当するカードがありません'}</div>`);
 }
 let qTimer;
 $('q').oninput = e => { clearTimeout(qTimer); qTimer = setTimeout(() => { F.q = e.target.value; shown = 150; renderResults(); }, 150); };
@@ -556,6 +581,7 @@ function addCard(id, delta) {
 }
 function listClick(e) {
   const row = e.target.closest('.crow'); if (!row) return;
+  if (e.target.closest('button[data-fav]')) { toggleFav(row.dataset.id); return; }
   const b = e.target.closest('button[data-d]');
   if (b) { addCard(row.dataset.id, +b.dataset.d); return; }
   openSheet(row.dataset.id);
@@ -705,7 +731,7 @@ function openSheet(id) {
       <div class="txt">${(c.x || []).map(t => `<p>${fmtText(t)}</p>`).join('') || '<p class="note">（テキストなし）</p>'}${alt}</div>
       ${c.st ? `<div>${esc((c.tg || []).join(' '))}　<b>[${esc(c.st.join(']['))}]</b></div>` : ''}
       <div class="sub">収録：${esc(c.s.join(' / '))}（${esc(c.no.join(', '))}）</div>
-      <div class="qty"><button data-q="-1">−</button><b>${n}</b><button data-q="1">＋</button><span class="note">枚</span></div>
+      <div class="qty"><button data-q="-1">−</button><b>${n}</b><button data-q="1">＋</button><span class="note">枚</span><button id="sheetFav" class="ghost" style="width:auto;height:auto;font-size:14px;padding:5px 10px;margin-left:12px;${favs.has(id) ? 'color:#ffcf4a' : ''}">${favs.has(id) ? '★ よく使う（外す）' : '☆ よく使うに登録'}</button></div>
       <div class="row">
         <button id="imgSet">画像を設定</button>
         <button id="imgPaste" title="コピーした画像を貼ります（この画面で Ctrl+V でも貼れます）">クリップボードから貼る</button>
@@ -727,6 +753,7 @@ function closeSheet() { $('sheet').classList.remove('on'); sheetId = null; }
 $('sheet').onclick = async e => {
   if (e.target.id === 'sheet' || e.target.id === 'sheetClose') { closeSheet(); return; }
   const q = e.target.closest('[data-q]'); if (q) { addCard(sheetId, +q.dataset.q); return; }
+  if (e.target.id === 'sheetFav') { toggleFav(sheetId); return; }
   if (e.target.id === 'imgSet') $('imgFile').click();
   if (e.target.id === 'imgPaste') {
     try {
@@ -757,9 +784,10 @@ $('sheet').onclick = async e => {
   }
   if (e.target.id === 'imgUpAll') { e.preventDefault(); upAllLocal(); }
 };
-async function setImage(f) {
-  if (!f || !sheetId) return;
-  const id = sheetId;   // 画像はカード番号（id）ごと
+function setImage(f) { if (sheetId) return setImageFor(sheetId, f); }
+// カード番号（id）に画像を入れる。対戦卓のカード（メニュー「画像を貼る」・詳しく見るで Ctrl+V）からも使う
+async function setImageFor(id, f) {
+  if (!f || !id) return;
   if (Images.shareOn) {
     // みんなの画像に入れる。自分だけの画像が残っているとそちらが先に出るので外す
     try { await Images.putShared(id, await shrink(f, 600, 0.8)); if (Images.hasLocal({ id })) await Images.del(id); renderAll(true); toast('みんなの画像にしました'); }
@@ -802,7 +830,26 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet()
 document.querySelectorAll('nav.tabs button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav.tabs button').forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === b.dataset.view));
+  document.body.classList.toggle('vbuilder', b.dataset.view === 'builder');
 });
+// デッキ構築の「再読み込み」：検索の条件を覚えてから読み込み直し、戻ったら元に戻す
+$('bdReload').onclick = () => {
+  try { sessionStorage.setItem('gw.bstate', JSON.stringify({ ...F, colors: [...F.colors], types: [...F.types], deck: $('builder').classList.contains('showdeck'), y: $('results').scrollTop })); } catch (e) {}
+  location.reload();
+};
+(() => {
+  let s; try { s = JSON.parse(sessionStorage.getItem('gw.bstate') || 'null'); sessionStorage.removeItem('gw.bstate'); } catch (e) {}
+  if (!s) return;
+  Object.assign(F, { q: s.q || '', cand: !!s.cand, fav: !!s.fav, cmin: s.cmin ?? null, cmax: s.cmax ?? null, set: s.set || '', sort: s.sort || 'no' });
+  // chips() は作った時の Set を握っているので、Set は作り直さず中身を入れ替える
+  F.colors.clear(); (s.colors || []).forEach(x => F.colors.add(x)); F.types.clear(); (s.types || []).forEach(x => F.types.add(x));
+  $('colorChips').querySelectorAll('.chip[data-v]').forEach(b => b.classList.toggle('on', F.colors.has(b.dataset.v)));
+  $('typeChips').querySelectorAll('.chip[data-v]').forEach(b => b.classList.toggle('on', F.types.has(b.dataset.v)));
+  $('q').value = F.q; $('sort').value = F.sort; $('costMin').value = F.cmin ?? ''; $('costMax').value = F.cmax ?? ''; $('setSel').value = F.set;
+  colorModeLabel(); $('favChip').classList.toggle('on', F.fav);
+  if (s.deck) $('mDeck').onclick();
+  window._bdScroll = s.y || 0;
+})();
 $('mSearch').onclick = () => { $('builder').classList.remove('showdeck'); $('mSearch').classList.add('on'); $('mDeck').classList.remove('on'); };
 $('mDeck').onclick = () => { $('builder').classList.add('showdeck'); $('mDeck').classList.add('on'); $('mSearch').classList.remove('on'); };
 
@@ -811,9 +858,9 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add
 
 // 起動
 if (!CARDS.length) document.body.innerHTML = '<p style="padding:20px">cards.js が読み込めませんでした。index.html と同じフォルダに置いてください。</p>';
-else { renderAll(); Images.init().then(() => renderAll()); }
+else { renderAll(); if (window._bdScroll) $('results').scrollTop = window._bdScroll; Images.init().then(() => renderAll(true)); }
 </script>
 <script src="lib/peerjs.min.js"></script>
-<script src="battle.js?v=20261116h"></script>
+<script src="battle.js?v=20261117a"></script>
 </body>
 </html>
