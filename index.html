@@ -65,6 +65,10 @@ body:not(.vbuilder) #bdReload{display:none}
 .deckhead{padding:10px 12px;border-bottom:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;gap:8px}
 .deckhead .row select{flex:1}
 #deckName{flex:1}
+.slvrow{align-items:center}
+.slvthumb{width:30px;height:42px;border-radius:4px;flex:none;border:1px solid #4a5675;background:repeating-linear-gradient(45deg,#2b3550 0 4px,#232b42 4px 8px) center/cover;cursor:pointer}
+.slvtxt{font-size:13px}
+.slvbig{width:180px;height:252px;margin:10px auto;border-radius:8px;border:1px solid #4a5675;background:repeating-linear-gradient(45deg,#2b3550 0 8px,#232b42 8px 16px) center/cover;display:flex;align-items:center;justify-content:center;color:#8ea0c8;font-weight:800}
 .stats{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--sub)}
 .stats b{color:var(--text);font-size:15px}
 .stats .bad{color:var(--danger)}
@@ -158,7 +162,7 @@ dialog .row{justify-content:flex-end;margin-top:10px}
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=M+PLUS+1:wght@500;700;800&display=swap">
-<link rel="stylesheet" href="battle.css?v=20261117b">
+<link rel="stylesheet" href="battle.css?v=20261117c">
 </head>
 <body class="vbuilder">
 <header>
@@ -210,6 +214,11 @@ dialog .row{justify-content:flex-end;margin-top:10px}
           <button id="dupDeck">複製</button>
           <button id="delDeck" class="ghost" style="color:var(--danger)">削除</button>
         </div>
+        <div class="row slvrow">
+          <div id="slvThumb" class="slvthumb" title="スリーブ（対戦卓の本国・裏向きのカードの裏面）"></div>
+          <span class="slvtxt">スリーブ <span id="slvState" class="note"></span></span>
+          <button id="slvBtn" style="margin-left:auto">スリーブを設定</button>
+        </div>
         <div class="stats" id="deckStats"></div>
         <div class="colorbar" id="colorBar"></div>
         <div class="row">
@@ -252,7 +261,20 @@ dialog .row{justify-content:flex-end;margin-top:10px}
   <div class="row"><button id="ruleReset" class="ghost">公式ルールに戻す</button><button id="ruleOk" class="primary">保存</button></div>
 </dialog>
 
+<dialog id="slvDlg">
+  <h3>スリーブ（このデッキの裏面）</h3>
+  <p class="note">対戦卓で、このデッキの本国と、裏向きで出したカードの裏面に出ます。<span id="slvShareNote"></span></p>
+  <div id="slvBig" class="slvbig"></div>
+  <div class="row" style="flex-wrap:wrap">
+    <button id="slvPick">画像を選ぶ</button>
+    <button id="slvPaste" title="コピーした画像を貼ります（この画面で Ctrl+V でも貼れます）">クリップボードから貼る</button>
+    <button id="slvDel" class="ghost" style="color:var(--danger)">外す（元の裏面に戻す）</button>
+    <button id="slvOk" class="primary" style="margin-left:auto">閉じる</button>
+  </div>
+</dialog>
+
 <div id="toast"></div>
+<input type="file" id="slvFile" accept="image/*" hidden>
 <input type="file" id="imgFile" accept="image/*" hidden>
 
 <script src="cards.js?v=20261113c"></script>
@@ -438,7 +460,8 @@ const Images = (() => {
   const hasShared = c => !!c && shared.has(c.id);
   const localKeys = () => [...local.keys()];
   const localUrl = k => local.get(k);
-  return { init, url, which, oldByName, put, del, hasLocal, hasShared, localKeys, localUrl, putShared, sync, get shareOn() { return on; } };
+  const raw = k => local.get(k) || shared.get(k) || null;   // スリーブなど、カード以外の画像（キーで直接）
+  return { init, url, raw, which, oldByName, put, del, hasLocal, hasShared, localKeys, localUrl, putShared, sync, get shareOn() { return on; } };
 })();
 
 // 長辺 max px に縮めて JPEG に（容量節約）。みんなの画像は 1文書1MB までなので小さめにする
@@ -596,6 +619,7 @@ function renderDeck() {
   $('deckSel').innerHTML = decks.slice().sort((a, b) => b.updated - a.updated)
     .map(x => `<option value="${x.id}" ${x.id === curId ? 'selected' : ''}>${esc(x.name)}（${Object.values(x.cards).reduce((a, b) => a + b, 0)}）</option>`).join('');
   if (document.activeElement !== $('deckName')) $('deckName').value = d.name;
+  renderSleeve();
   const ents = deckEntries(d);
   const missing = Object.keys(d.cards).filter(id => !BY_ID.has(id)).length;
   const n = ents.reduce((s, e) => s + e[1], 0);
@@ -637,7 +661,7 @@ $('deckSel').onchange = e => { curId = e.target.value; saveDecks(); renderAll();
 $('deckName').oninput = e => { cur().name = e.target.value || '無題'; saveDecks(); };
 $('deckName').onchange = () => renderDeck();
 $('newDeck').onclick = () => { const d = newDeckObj('新しいデッキ'); decks.push(d); curId = d.id; saveDecks(); renderAll(); $('deckName').focus(); $('deckName').select(); };
-$('dupDeck').onclick = () => { const d = newDeckObj(cur().name + 'のコピー'); d.cards = { ...cur().cards }; decks.push(d); curId = d.id; saveDecks(); renderAll(); toast('複製しました'); };
+$('dupDeck').onclick = () => { const d = newDeckObj(cur().name + 'のコピー'); d.cards = { ...cur().cards }; if (cur().sl) d.sl = cur().sl; decks.push(d); curId = d.id; saveDecks(); renderAll(); toast('複製しました'); };
 $('delDeck').onclick = () => {
   const b = $('delDeck');
   if (!b.dataset.arm) { b.dataset.arm = 1; b.textContent = 'もう一度で削除'; setTimeout(() => { delete b.dataset.arm; b.textContent = '削除'; }, 3000); return; }
@@ -646,6 +670,66 @@ $('delDeck').onclick = () => {
   if (!decks.length) decks.push(newDeckObj('新しいデッキ'));
   curId = decks[0].id; saveDecks(); renderAll(); toast('削除しました');
 };
+
+// =====================================================================
+//  スリーブ（デッキごとの裏面の画像。2026-11-17）
+//  デッキに sl＝画像のキー「SLV|デッキのid」を持つ。画像はカード画像と同じ置き場（みんなの画像があればそこへ。相手・観戦者にも見える）。
+//  対戦卓では「準備」の時に sl を送り、席に覚える（battle.js の backFace）。複製したデッキは同じ画像を指す。
+// =====================================================================
+function renderSleeve() {
+  const d = cur(), u = d.sl ? Images.raw(d.sl) : null;
+  const bg = u ? `url("${u}") center/cover` : '';
+  $('slvThumb').style.background = bg; $('slvBig').style.background = bg;
+  $('slvBig').textContent = u ? '' : 'GW';
+  $('slvState').textContent = d.sl ? (u ? '設定済み' : '読み込み中…') : '（なし）';
+  $('slvBtn').textContent = d.sl ? 'スリーブを変える' : 'スリーブを設定';
+  $('slvDel').style.display = d.sl ? '' : 'none';
+}
+const openSleeve = () => {
+  $('slvShareNote').textContent = Images.shareOn ? 'みんなの画像に入るので、相手や観戦の人にも見えます。' : '（共有の設定がないので、このブラウザだけに見えます）';
+  renderSleeve(); $('slvDlg').showModal();
+};
+$('slvBtn').onclick = openSleeve;
+$('slvThumb').onclick = openSleeve;
+$('slvOk').onclick = () => $('slvDlg').close();
+$('slvPick').onclick = () => $('slvFile').click();
+$('slvFile').onchange = e => { const f = e.target.files[0]; e.target.value = ''; setSleeve(f); };
+async function setSleeve(f) {
+  if (!f) return;
+  const d = cur(), key = 'SLV|' + d.id;
+  try {
+    const b = await shrink(f, 600, 0.8);
+    if (Images.shareOn) { await Images.putShared(key, b); if (Images.localKeys().includes(key)) await Images.del(key); }
+    else await Images.put(key, b);
+    d.sl = key; saveDecks(); renderSleeve(); renderDeck();
+    toast(Images.shareOn ? 'スリーブを設定しました（みんなに見えます）' : 'スリーブを設定しました');
+  } catch (err) { toast(err.message || 'スリーブを保存できませんでした'); }
+}
+$('slvDel').onclick = async () => {
+  const d = cur(), key = d.sl; if (!key) return;
+  // 複製したデッキが同じ画像を使っていたら画像は残す
+  if (!decks.some(x => x !== d && x.sl === key)) {
+    try { if (Images.localKeys().includes(key)) await Images.del(key); if (Images.shareOn && Images.raw(key)) await Images.putShared(key, null); } catch (err) {}
+  }
+  delete d.sl; saveDecks(); renderSleeve(); toast('スリーブを外しました');
+};
+$('slvPaste').onclick = async () => {
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.read) throw new Error('read なし');
+    for (const it of await navigator.clipboard.read()) {
+      const ty = it.types.find(t => t.startsWith('image/'));
+      if (ty) { await setSleeve(await it.getType(ty)); return; }
+    }
+    toast('クリップボードに画像がありません（画像を右クリック→「画像をコピー」してから）');
+  } catch (e) { toast('このブラウザでは貼れません。Ctrl+V で貼ってください'); }
+};
+document.addEventListener('paste', e => {
+  if (!$('slvDlg').open) return;
+  const it = [...(e.clipboardData?.items || [])].find(i => i.kind === 'file' && i.type.startsWith('image/'));
+  if (!it) { toast('クリップボードに画像がありません'); return; }
+  e.preventDefault(); e.stopImmediatePropagation(); setSleeve(it.getAsFile());
+}, true);
+window.addEventListener('gw-images', () => renderSleeve());
 
 // =====================================================================
 //  デッキコード（人が読めるテキスト。LINEで送ってもOK）
@@ -861,6 +945,6 @@ if (!CARDS.length) document.body.innerHTML = '<p style="padding:20px">cards.js �
 else { renderAll(); if (window._bdScroll) $('results').scrollTop = window._bdScroll; Images.init().then(() => renderAll(true)); }
 </script>
 <script src="lib/peerjs.min.js"></script>
-<script src="battle.js?v=20261117b"></script>
+<script src="battle.js?v=20261117c"></script>
 </body>
 </html>

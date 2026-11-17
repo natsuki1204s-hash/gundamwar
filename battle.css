@@ -87,6 +87,8 @@
 .mc .mname{font-weight:700;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;text-shadow:0 1px 2px #000}
 .mc .mst{margin-top:auto;font-weight:800;background:#000a;border-radius:3px;padding:0 3px;align-self:flex-end;font-size:10px}
 .mc[data-c="白"] .mname{color:#1b1b1f;text-shadow:none}
+.mc.back.slv{background:#111}
+.mc.back.slv .bl{position:relative;z-index:1;background:#000b;border-radius:4px;padding:1px 5px;color:#fff;text-align:center;line-height:1.2}
 .mc.back{background:repeating-linear-gradient(45deg,#2b3550 0 6px,#232b42 6px 12px);border-color:#4a5675;align-items:center;justify-content:center;color:#8ea0c8;font-weight:800;font-size:11px}
 .slot{flex:none;display:flex;flex-direction:column;align-items:center;gap:2px}
 .slot.r{width:var(--ch)}

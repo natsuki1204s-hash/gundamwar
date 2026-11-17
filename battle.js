@@ -277,7 +277,7 @@ function apply(a, who) {
   switch (a.t) {
     case 'counts': return;
     case 'note': log(`${nm}が${a.msg}`); return;
-    case 'ready': seatObj.ready = true; seatObj.deckName = a.deckName || ''; seatObj.dt = Math.max(0, a.dt | 0) || null; log(`${nm}が「${seatObj.deckName}」で準備しました`, 'sys'); return;
+    case 'ready': seatObj.ready = true; seatObj.deckName = a.deckName || ''; seatObj.sl = typeof a.sl === 'string' && /^SLV\|[\w-]{1,60}$/.test(a.sl) ? a.sl : null; seatObj.dt = Math.max(0, a.dt | 0) || null; log(`${nm}が「${seatObj.deckName}」で準備しました`, 'sys'); return;
     case 'enter': {   // 手札・本国から場へ
       const tz = S.seats[a.seat ?? who.seat]?.z[a.zone]; if (!tz) return;
       const cards = a.cards.map(c => ({ u: c.u, id: c.id, o: who.seat, r: false, f: !!a.f && !PILES.includes(a.zone), s: [], ...(a.vb && a.zone === 'deploy' ? { vb: true } : {}) }));
@@ -604,7 +604,7 @@ function apply(a, who) {
     case 'newGame':
       if (who.seat !== 0) return '新しいゲームは部屋を作った人だけが始められます';
       S.game++; S.turn = 0; S.active = null; S.phase = null; S.first = null; S.reveal = null; S.pick = null;
-      S.seats.forEach(s => { s.z = emptyZones(); s.ready = false; s.dn = 0; s.hn = 0; s.deckName = ''; s.su = null; s.mull = 0; s.pk = null; s.sh = null; });
+      S.seats.forEach(s => { s.z = emptyZones(); s.ready = false; s.dn = 0; s.hn = 0; s.deckName = ''; s.sl = null; s.su = null; s.mull = 0; s.pk = null; s.sh = null; });
       S.endAsk = null; S.sent = null; S.pick = null;
       log('── 新しいゲーム。デッキを選んで準備してください ──', 'turn');
       return;
@@ -734,7 +734,7 @@ function startWithDeck(d) {
   Object.entries(d.cards).forEach(([id, n]) => { if (BY_ID.has(id)) for (let i = 0; i < n; i++) list.push({ u: `${B.seat}${rid()}${list.length}`, id }); });
   if (!list.length) { toast('このデッキは空です'); return; }
   B.priv = { game: B.S.game, deck: shuffle(list), hand: [], look: [] };
-  savePriv(); act({ t: 'ready', deckName: d.name, dt: list.length });
+  savePriv(); act({ t: 'ready', deckName: d.name, dt: list.length, sl: d.sl || null });
   toast('本国を切りました。「ゲームスタート」で最初の手札を引きます');
 }
 
@@ -858,9 +858,18 @@ function renderLobby() {
   $('bCode').onkeydown = e => { if (e.key === 'Enter') joinRoom('player'); };
 }
 
-function miniFace(c) {
+// 裏向きのカード。持ち主の席のデッキにスリーブ（裏面の画像、デッキ構築で設定）があればそれを出す（2026-11-17）
+let slvTry = 0;
+function backFace(seat, txt = 'GW') {
+  const s = seat != null && (VS || B.S)?.seats?.[seat], k = s && s.sl;
+  const u = k ? Images.raw(k) : null;
+  if (k && !u && Date.now() - slvTry > 30000) { slvTry = Date.now(); Images.sync(); }   // 相手のスリーブがまだ届いていなければ取りに行く
+  if (!u) return `<div class="mc back">${txt}</div>`;
+  return `<div class="mc back slv"><img src="${esc(u)}" alt="スリーブ">${txt === 'GW' ? '' : `<span class="bl">${txt}</span>`}</div>`;
+}
+function miniFace(c, o) {
   const x = c.id && BY_ID.get(c.id);
-  if (!x) return `<div class="mc back">GW</div>`;
+  if (!x) return backFace(o);
   const u = Images.url(x);
   if (u) return `<div class="mc" data-c="${x.c}"><img src="${esc(u)}" alt="${esc(x.n)}" loading="lazy"></div>`;
   return `<div class="mc" data-c="${x.c}" style="--cc:var(--c-${x.c})">
@@ -924,7 +933,7 @@ function slot(c, src, lead = false) {
   const v = c.v && !c.f && known && known.alt;
   const tmb = c.tm ? `<div class="tmb" title="${esc(tmTitle(c.tm))}">${esc(tmLabel(c.tm))}</div>` : '';
   const vb = c.vb && !c.f && known;
-  return `<div class="slot${c.r ? ' r' : ''}${v ? ' v' : ''}${vb ? ' vb' : ''}${lead ? ' lead1' : ''}${c.tk ? ' tok' : ''}${now ? ' hst' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" ${known ? `data-cid="${esc(c.id)}"` : ''}>${lead ? '<span class="leadtag">先頭</span>' : ''}${c.tk ? '<span class="tktag" title="トークン（場を離れると消えます）">トークン</span>' : ''}${vb ? `<span class="vbtag" style="--cc:var(--c-${known.c})" title="ヴァリアブル：${known.c}の特殊G（国力${known.c}1）として扱います">G ${known.c}</span>` : ''}${(c.f && known) ? miniFace({}).replace('GW', '裏') : miniFace(c)}${coinBadges(c)}${tmb}${ust}${subs ? `<div class="subs">${subs}</div>` : ''}</div>`;
+  return `<div class="slot${c.r ? ' r' : ''}${v ? ' v' : ''}${vb ? ' vb' : ''}${lead ? ' lead1' : ''}${c.tk ? ' tok' : ''}${now ? ' hst' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" ${known ? `data-cid="${esc(c.id)}"` : ''}>${lead ? '<span class="leadtag">先頭</span>' : ''}${c.tk ? '<span class="tktag" title="トークン（場を離れると消えます）">トークン</span>' : ''}${vb ? `<span class="vbtag" style="--cc:var(--c-${known.c})" title="ヴァリアブル：${known.c}の特殊G（国力${known.c}1）として扱います">G ${known.c}</span>` : ''}${(c.f && known) ? backFace(c.o, '裏') : miniFace(c, c.o)}${coinBadges(c)}${tmb}${ust}${subs ? `<div class="subs">${subs}</div>` : ''}</div>`;
 }
 function zoneHtml(seat, z, cls = '') {
   const arr = VS.seats[seat].z[z];
@@ -946,7 +955,7 @@ function deckTotal(seat) {
   Object.values(s.z).forEach(arr => arr.forEach(c => { if (!c.coin && !c.tk) n += 1 + (c.s || []).length; }));
   return Math.max(n, 1);
 }
-const stackHtml = (seat, n, attrs = '') => n ? `<div class="slot stk" ${attrs} style="--h:${Math.min(1, n / deckTotal(seat)).toFixed(3)}" title="${n}枚（デッキ${deckTotal(seat)}枚の${Math.round(Math.min(1, n / deckTotal(seat)) * 100)}%）"><div class="mc back">GW</div></div>` : '';
+const stackHtml = (seat, n, attrs = '') => n ? `<div class="slot stk" ${attrs} style="--h:${Math.min(1, n / deckTotal(seat)).toFixed(3)}" title="${n}枚（デッキ${deckTotal(seat)}枚の${Math.round(Math.min(1, n / deckTotal(seat)) * 100)}%）">${backFace(seat)}</div>` : '';
 function deckPile(seat) {
   const s = VS.seats[seat], mine = seat === B.seat && B.priv;
   const n = mine ? B.priv.deck.length : s.dn;
@@ -1135,7 +1144,7 @@ function shownRow(seat, big) {
   // 「指定」ボタンはカードの下に直接（2026-11-16：メニューを開かなくても押せるように。Edge で指定できなかった件）
   const ptb = c => canPt ? `<button class="mini ptbtn${sh.pt === c.u ? ' on' : ''}" data-ptbtn="${esc(c.u)}" data-seat="${seat}">${sh.pt === c.u ? '指定を外す' : '指定する'}</button>` : '';
   const cards = sh.c.map(c => `<div class="shcard">${slot({ u: c.u, id: c.id }, 'shown').replace(/draggable="(true|false)"/, 'draggable="false"').replace('class="slot', `data-seat="${seat}" class="slot${sh.pt === c.u ? ' pt' : ''}`)}${ptb(c)}</div>`).join('')
-    + (rest ? `<div class="slot"><div class="mc back">裏<br>×${rest}</div></div>` : '');
+    + (rest ? `<div class="slot">${backFace(seat, `裏<br>×${rest}`)}</div>` : '');
   const cnt = `<span class="shn">${sh.c.length}</span>枚${rest ? `<span class="shr">（ほかに裏 ${rest}枚）</span>` : '<span class="shr">（全部）</span>'}`;
   if (big) return `<div class="bshown big" style="--n:${sh.c.length + (rest ? 1 : 0)}"><div class="shh"><span class="hudtag">OPEN HAND</span><b>${who}</b>の手札を公開中　${cnt}${canPt ? '<span class="shhint">押すと指定（ハンデスなど）・乗せると右に大きく</span>' : ''}<button class="mini shmin" data-shtog="${seat}" title="1行に畳みます（公開中のカードが変わるとまた大きく出ます）">小さくする ▲</button></div>
     <div class="zc">${cards}</div></div>`;
