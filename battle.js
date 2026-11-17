@@ -915,11 +915,16 @@ function slot(c, src, lead = false) {
   const depth = x => { let d = 0, y = x; while (y && y.on && d < 20) { y = (c.s || []).find(z => z.u === y.on); d++; } return d; };
   const subs = (c.s || []).map(x => { const on = x.on && (c.s || []).find(z => z.u === x.on), dp = depth(x); return `<div class="sub${x.r ? ' r' : ''}${dp ? ' on' : ''}" style="${dp ? `--dp:${dp}` : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(x.u)}" ${x.id ? `data-cid="${esc(x.id)}"` : ''} title="${on ? `『${esc(on.f && !on.id ? '裏向きのカード' : cname(on))}』の上にセットしているカード` : 'セットしているカード'}。押すとこのカードだけ動かせます（手札・本国・捨て山など）。このカードの上にさらにセットするには、ここへ落とします">${dp ? '↳'.repeat(Math.min(dp, 3)) : ''}${esc(x.f && !x.id ? '裏向き' : cname(x))}${Object.keys(x.cn || {}).length ? ` ●${Object.values(x.cn).reduce((a, b) => a + b, 0)}` : ''}${x.tm ? ` <span class="tms" title="${esc(tmTitle(x.tm))}">${esc(tmLabel(x.tm))}</span>` : ''}${!x.f && fxOf(x.id).trBoost ? (n => ` <span class="tms auto" title="自動：場・自軍ハンガー・自軍ジャンクヤードの「名称:TR」のユニット${n}枚（5まで）→ +${n}/+${n}/+${n}（合計に足しています）">自動+${n}</span>`)(trCount(x.o ?? c.o)) : ''}</div>`; }).join('');
   const tot = !c.f ? groupStats(c) : null;
-  const v = c.v && !c.f && known && known.alt;
   const tmc = hasTm(c) ? ' tm' : '';
+  // 場のユニットは今の戦闘力（変形・セット・コイン・一時修正込み）をカードの下に大きく（2026-11-17）。元から変わった数字は色を変える
+  const now = src === 'pub' && !c.f && !c.vb && known && UNIT_T.includes(known.t) ? cardStats(c) : null;
+  const base = now && (c.v && known.alt ? known.alt.stats : known.st) || [];
+  const ust = now ? `<div class="ust${tmc}${tot ? ' grp' : ''}" title="${tot ? (subs ? 'セットグループの合計' : '今の戦闘力') + '（格闘/射撃/耐久。セット・コイン・一時修正込み）' : '格闘/射撃/耐久'}">${(subs && tot) ? '<small>計</small>' : ''}${now.map((v, i) => `<b class="${String(v) === String(base[i]) ? '' : (+v > +base[i] ? 'up' : +v < +base[i] ? 'dn' : 'ch')}">${esc(v)}</b>`).join('<i>/</i>')}</div>`
+    : tot ? `<div class="gst ov${tmc}" title="コイン・一時修正込みの戦闘力">[${esc(tot.join(']['))}]</div>` : '';
+  const v = c.v && !c.f && known && known.alt;
   const tmb = c.tm ? `<div class="tmb" title="${esc(tmTitle(c.tm))}">${esc(tmLabel(c.tm))}</div>` : '';
   const vb = c.vb && !c.f && known;
-  return `<div class="slot${c.r ? ' r' : ''}${v ? ' v' : ''}${vb ? ' vb' : ''}${lead ? ' lead1' : ''}${c.tk ? ' tok' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" ${known ? `data-cid="${esc(c.id)}"` : ''}>${lead ? '<span class="leadtag">先頭</span>' : ''}${c.tk ? '<span class="tktag" title="トークン（場を離れると消えます）">トークン</span>' : ''}${vb ? `<span class="vbtag" style="--cc:var(--c-${known.c})" title="ヴァリアブル：${known.c}の特殊G（国力${known.c}1）として扱います">G ${known.c}</span>` : ''}${(c.f && known) ? miniFace({}).replace('GW', '裏') : miniFace(c)}${coinBadges(c)}${tmb}${!subs && tot ? `<div class="gst ov${tmc}" title="コイン・一時修正込みの戦闘力">[${esc(tot.join(']['))}]</div>` : ''}${subs ? `<div class="subs">${tot ? `<div class="gst${tmc}" title="セットグループの合計（コイン・一時修正込み）">計[${esc(tot.join(']['))}]</div>` : ''}${subs}</div>` : ''}</div>`;
+  return `<div class="slot${c.r ? ' r' : ''}${v ? ' v' : ''}${vb ? ' vb' : ''}${lead ? ' lead1' : ''}${c.tk ? ' tok' : ''}${now ? ' hst' : ''}" draggable="${isPlayer()}" data-src="${src}" data-u="${esc(c.u)}" ${known ? `data-cid="${esc(c.id)}"` : ''}>${lead ? '<span class="leadtag">先頭</span>' : ''}${c.tk ? '<span class="tktag" title="トークン（場を離れると消えます）">トークン</span>' : ''}${vb ? `<span class="vbtag" style="--cc:var(--c-${known.c})" title="ヴァリアブル：${known.c}の特殊G（国力${known.c}1）として扱います">G ${known.c}</span>` : ''}${(c.f && known) ? miniFace({}).replace('GW', '裏') : miniFace(c)}${coinBadges(c)}${tmb}${ust}${subs ? `<div class="subs">${subs}</div>` : ''}</div>`;
 }
 function zoneHtml(seat, z, cls = '') {
   const arr = VS.seats[seat].z[z];
@@ -1245,9 +1250,8 @@ function render() {
       <div class="bfield bg-ring">${zoneHtml(op, 'ring')}${zoneHtml(me, 'ring')}</div>
       <div class="bfield bg-earth">${zoneHtml(op, 'earth')}${zoneHtml(me, 'earth')}</div>
     </div>
-    ${rowHtml2(me)}
-    ${B.role === 'spect' ? `<div class="btop">${seatStrip(me, true)}${sideZones(me, true)}</div>` + shownRow(me) : ''}
-    ${B.role !== 'spect' ? `<div class="bhand"><div class="zone hz" data-seat="${me}" data-zone="hand"><div class="zl"><b>${esc(S.seats[me].name)}</b>${S.active === me ? ' <span style="color:var(--accent)">● あなたのターン</span>' : ''}　<span class="znm"><i class="zen">HAND</i>手札<span class="zcnt">${B.priv ? B.priv.hand.length : 0}</span></span>${showing ? `<span class="shnote">● ${mySh.size}枚を公開中</span><button id="bShowOff" class="mini">公開を終える</button>` : '※自分にだけ見えます'}</div><div class="zc fan" style="--n:${Math.max(hn, 1)}">${myHand}</div></div>${sideZones(me, false)}</div>` : ''}
+    ${B.role === 'spect' ? rowHtml2(me) + `<div class="btop">${seatStrip(me, true)}${sideZones(me, true)}</div>` + shownRow(me) : ''}
+    ${B.role !== 'spect' ? `<div class="bme${VS.active === me ? ' active' : ''}">${gZoneHtml(me)}<div class="piles">${zoneHtml(me, 'junk')}${zoneHtml(me, 'removed')}</div>${zoneHtml(me, 'deploy', 'dep')}<div class="bhand"><div class="zone hz" data-seat="${me}" data-zone="hand"><div class="zl"><b>${esc(S.seats[me].name)}</b>${S.active === me ? ' <span style="color:var(--accent)">● あなたのターン</span>' : ''}　<span class="znm"><i class="zen">HAND</i>手札<span class="zcnt">${B.priv ? B.priv.hand.length : 0}</span></span>${showing ? `<span class="shnote">● ${mySh.size}枚を公開中</span><button id="bShowOff" class="mini">公開を終える</button>` : '※自分にだけ見えます'}</div><div class="zc fan" style="--n:${Math.max(hn, 1)}">${myHand}</div></div></div>${sideZones(me, false)}</div>` : ''}
     <div class="bctl">${ctl}</div>
     ${shownOverlay(B.role === 'spect' ? [op, me] : [op])}
     ${castOverlay()}

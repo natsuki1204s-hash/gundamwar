@@ -1,6 +1,6 @@
 /* ===== 対戦卓 ===== */
 /* カードの高さは画面の高さから決める（縦に5段並ぶ） */
-#battle{--ch:clamp(56px,calc((100vh - 262px) / 5),120px);--cw:calc(var(--ch) * .713)}
+#battle{--ch:clamp(56px,calc((100vh - 262px) / 5.5),120px);--cw:calc(var(--ch) * .713)}
 #battle{gap:0;align-items:stretch}
 .blobby{margin:auto;max-width:520px;width:100%;padding:24px 16px;display:flex;flex-direction:column;gap:14px}
 .blobby h2{margin:0;font-size:20px}
@@ -458,3 +458,50 @@ body:has(#battle.on) #toast{bottom:auto;top:56px}
 .bendask .ebtn{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .bendask .shr{color:var(--hud2);font-size:12px}
 .tms.auto{color:#9fe3b0}
+
+/* ===== 手札を手前に大きく（マジックアリーナ風、2026-11-17 ナツキの手描き）=====
+   自分の段：G（縦長、2段に折り返す）｜ジャンクヤード・除外（縦に積む）｜ 上に配備エリア、下に大きい扇の手札 ｜ 手札の右にハンガー */
+#battle{--hch:clamp(96px,calc(var(--ch) * 1.5),190px)}
+.bme{display:grid;grid-template-columns:minmax(150px,calc(var(--cw) * 2.6 + 30px)) calc(var(--cw) + 14px) minmax(0,1fr) auto;
+  grid-template-rows:auto auto;gap:4px 6px;padding:3px 0 0 8px;position:relative;z-index:30}
+.bme.active{box-shadow:inset 3px 0 0 var(--accent)}
+.bme>.zone.g{grid-column:1;grid-row:1 / 3;max-width:none;min-width:0;margin-bottom:4px}
+.bme>.zone.g>.zc{flex-wrap:wrap;overflow-x:hidden;overflow-y:auto;align-content:flex-start}
+.bme>.piles{grid-column:2;grid-row:1 / 3;flex-direction:column;margin-bottom:4px}
+.bme>.piles>.pile{flex:1 1 0;width:auto;min-width:0}
+.bme>.zone.dep{grid-column:3 / 5;grid-row:1;margin-right:8px}
+.bme>.bhand{grid-column:3;grid-row:2;border-top:0;background:transparent;min-width:0;display:flex}
+.bme>.bside2{grid-column:4;grid-row:2;padding:0 8px 4px 0}
+.bme>.bside2>.zone.hang{width:calc(var(--cw) * 3 + 22px);height:100%}
+/* 手札だけカードを大きく（--hch）。名前の行はカードの上に重ねて高さを節約 */
+.bme .zone.hz{--ch:var(--hch);--cw:calc(var(--hch) * .713);padding:0}
+.bme .zone.hz>.zl{position:absolute;left:4px;top:0;z-index:70;pointer-events:none;background:#0c0f16b0;border-radius:0 0 6px 0;padding:1px 6px}
+.bme .zone.hz>.zl button{pointer-events:auto}
+.bme .zone.hz>.zc.fan{padding:16px 24px 0;min-height:calc(var(--ch) * 1.1 + 18px)}
+.bme .zone.hz .mc{font-size:calc(var(--ch) * .07);border-radius:7px}
+.bme .zone.hz .mc .mst,.bme .zone.hz .mc .mcost{font-size:calc(var(--ch) * .075)}
+.bme .zc.fan>.slot:hover>.mc{transform:rotate(calc(var(--a,0) * -1)) translateY(calc(var(--ch) * (-.16 - .08 * var(--t2,0)))) scale(1.18)}
+.bme+.bctl{position:relative;z-index:31}
+
+/* 場のユニットの今の戦闘力（格闘/射撃/耐久）を大きく。変わった数字は 上がった＝緑、下がった＝赤、一時修正込み＝水色の枠 */
+.slot.hst{position:relative}
+.slot.hst .mc .mst{display:none}
+.ust{position:absolute;left:50%;bottom:2px;transform:translateX(-50%);z-index:2;display:flex;align-items:baseline;gap:1px;white-space:nowrap;pointer-events:none;
+  font-family:"Chakra Petch","M PLUS 1",sans-serif;font-weight:700;font-size:clamp(12px,calc(var(--ch) * .15),19px);line-height:1.05;
+  padding:0 5px 1px;border-radius:5px;background:#0d0f15e8;border:1px solid #d9a52099;color:#fff;box-shadow:0 1px 4px #000c}
+.ust b{font-weight:700}
+.ust i{font-style:normal;color:#8b93a3;font-size:.7em;margin:0 1px}
+.ust small{font-size:.6em;color:var(--accent);margin-right:3px;align-self:center}
+.ust b.up{color:#7dff9b}
+.ust b.dn{color:#ff8a8a}
+.ust b.ch{color:#ffd27a}
+.ust.grp{border-color:#d9a520}
+.ust.tm{border-color:#4fd1ff;background:#0c2a36ee}
+.slot.r .ust{bottom:auto;top:calc(50% + var(--cw) * .5 - 1.3em)}
+.slot.hst:has(.subs) .ust{bottom:auto;top:calc(var(--ch) - 1.35em)}
+.slot.r.hst:has(.subs) .ust{top:calc(50% + var(--cw) * .5 - 1.3em)}
+.pile .ust{display:none}
+.bme{flex:none}
+/* 先頭札は戦闘力と重ならないよう、カードの上の真ん中へ */
+.slot.hst .leadtag{left:50%;bottom:auto;top:-2px;transform:translateX(-50%)}
+.slot.r.hst .leadtag{top:calc(50% - var(--cw) * .5 - 2px);bottom:auto}
