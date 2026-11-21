@@ -287,7 +287,7 @@ function apply(a, who) {
       if (a.onto) { const t = findCard(S, a.onto); if (t && !t.c.coin) { onto = t.c; putOnto(t, cards); } else tz.push(...cards); }
       else tz.push(...cards);
       const from = a.src === 'deck' ? '本国の上から' : '手札から';
-      const names = cards.length > 3 || SECRET.includes(a.zone) ? `${cards.length}枚` : cards.map(c => `『${c.f ? '裏向きのカード' : cname(c)}』`).join('');
+      const names = (cards.length > 3 && !['junk', 'removed'].includes(a.zone)) || SECRET.includes(a.zone) ? `${cards.length}枚` : cards.map(c => `『${c.f ? '裏向きのカード' : cname(c)}』`).join('');
       log(`${nm}が${from}${names}を${onto ? `『${cname(onto)}』にセット` : zoneLabel(a.seat ?? who.seat, a.zone) + 'へ'}`);
       return;
     }
@@ -588,6 +588,31 @@ function apply(a, who) {
       got.forEach(c => sendGain(c.o, { u: c.u, id: c.id }, to));
       const short = n < want ? `（捨て山が${n}枚しかなかったので${n}枚）` : '';
       log(a.heal ? `${nm}が本国を${n}回復しました${short}` : `${nm}が捨て山の上から${n}枚を本国の${to === 'top' ? '上' : '下'}へ戻しました${short}`);
+      return;
+    }
+    case 'pjunk': {   // 捨て山の上からN枚を廃棄（持ち主のジャンクヤードへ表向き。公開情報になるので名前を記録に出す）
+      const arr = seatObj.z.discard, want = Math.max(1, a.n | 0), n = Math.min(want, arr.length);
+      if (n < 1) return '捨て山がありません';
+      const got = arr.splice(arr.length - n, n).reverse();   // got[0] が捨て山の一番上
+      if (seatObj.pk && seatObj.pk !== 'all') seatObj.pk = seatObj.pk.filter(u => !got.some(c => c.u === u));
+      got.forEach(c => { c.r = false; c.f = false; S.seats[c.o].z.junk.push(c); });
+      log(`${nm}が捨て山の上から${n}枚を廃棄しました（ジャンクヤードへ：${got.map(c => `『${cname(c)}』`).join('')}）${n < want ? `（捨て山が${n}枚しかなかったので${n}枚）` : ''}`);
+      return;
+    }
+    case 'diana': {   // ディアナ帰還（O-62）：自軍G1枚をロール → 捨て山の上1枚を廃棄 → 本国を1回復
+      const fd = findCard(S, a.u), fg = findCard(S, a.g);
+      if (!fd || fd.seat !== who.seat || fd.c.id !== DIANA_ID) return 'ディアナ帰還が見つかりません';
+      if (!fg || fg.seat !== who.seat || fg.zone !== 'G' || fg.parent || fg.c.coin) return 'ロールするGが見つかりません';
+      if (fg.c.r) return 'そのGはもうロールしています';
+      fg.c.r = true;
+      const arr = seatObj.z.discard, parts = [`『${cname(fg.c)}』をロール`];
+      if (arr.length) {
+        const c = arr.pop(); c.r = false; c.f = false; S.seats[c.o].z.junk.push(c);
+        parts.push(`捨て山の上の『${cname(c)}』を廃棄`);
+        if (arr.length && canReach(arr[arr.length - 1].o)) { const h = arr.pop(); sendGain(h.o, { u: h.u, id: h.id }, 'top'); parts.push('本国を1回復'); }
+        else parts.push('捨て山が無くなったので回復は0');
+      } else parts.push('捨て山が無いので廃棄・回復なし');
+      log(`${nm}が『ディアナ帰還』を使いました：${parts.join('→')}`);
       return;
     }
     case 'preorder': {   // 置き場の中の並べ替え（d：上へ+1／下へ-1、to：'top'|'bottom'）
@@ -1064,6 +1089,7 @@ const AUTO_FX = {
   'C-8|サラサ再臨': { k: 'sarasa', d: '本国の上5枚から1枚を手札へ、残りは好きな順で本国の下へ' },
   'C-2|宝物没収': { k: 'pdraw2', d: '捨て山の上のカード2枚を引く' }
 };
+const DIANA_ID = 'O-62|ディアナ帰還';   // 場で使うオペレーション（《(0)毎》G1枚ロール→捨て山の上1枚を廃棄→本国1回復）。場のカードのメニューから
 const coinCount = c => Object.values(c.cn || {}).reduce((a, b) => a + b, 0);
 // シールド・キャノンの X：場（両者の配備・戦闘エリア・リング）と、持ち主のハンガー・ジャンクヤードにある、名前に「TR」を含む表向きのユニットの枚数（5まで）
 function trCount(seat) {
@@ -1560,6 +1586,17 @@ function pubMenu(u, x, y) {
       }]), { cid: c.id });
     }], '-');
   }
+  // ディアナ帰還：ロールするGを選ぶ（1種類だけならすぐ）→ 管理役の diana
+  if (!c.f && mine && owner === B.seat && c.id === DIANA_ID) {
+    const gs = VS.seats[owner].z.G.filter(g => !g.coin && !g.r), kinds = new Map();
+    gs.forEach(g => { const k = g.f ? '裏向きのG' : cname(g); if (!kinds.has(k)) kinds.set(k, g); });
+    const use = g => act({ t: 'diana', u, g: g.u });
+    items.unshift([`ディアナ帰還を使う（G1枚ロール→捨て山の上1枚を廃棄→本国1回復）${gs.length ? '' : '：ロールできるGがありません'}`, () => {
+      if (!gs.length) return toast('ロールしていないGがありません');
+      if (kinds.size === 1) return use(gs[0]);
+      menu(x, y, 'ロールするGを選んでください', [...kinds].map(([k, g]) => [`${k}${g.id && g.id.startsWith('BASIC|') ? `（ロールしていないもの${gs.filter(h => h.id === g.id && !h.f).length}枚）` : ''}`, () => use(g)]));
+    }], '-');
+  }
   const coinItems = [['コインを乗せる…', () => coinPick(x, y, `『${cname(c)}』に乗せるコイン`, n => act({ t: 'coin', u, name: n, d: 1 }))]];
   for (const [k, n] of cn) coinItems.push([`${k}（${n}枚）を1枚足す`, () => act({ t: 'coin', u, name: k, d: 1 })], [`${k}を1枚取る`, () => act({ t: 'coin', u, name: k, d: -1 })], [`${k}を外して場に置く`, () => act({ t: 'coinOff', u, name: k })]);
   items.push('-', ...coinItems);
@@ -1853,6 +1890,8 @@ function discardPileMenu(x, y) {
     [`上から${n}枚を本国の上へ戻す`, () => act({ t: 'precover', n, to: 'top' })],
     [`上から${n}枚を本国の下へ戻す`, () => act({ t: 'precover', n, to: 'bottom' })],
     [`上から${n}枚を捨て山の下へ送る（見ないで）`, () => act({ t: 'pmove', n, to: 'dbottom' })],
+    ['上の1枚を廃棄（ジャンクヤードへ）', () => act({ t: 'pjunk', n: 1 })],
+    ...(n > 1 ? [[`上から${n}枚を廃棄（ジャンクヤードへ）`, () => act({ t: 'pjunk', n })]] : []),
     '-',
     ['上の1枚を見る', () => look(1)],
     ...(n > 1 ? [[`上から${n}枚を見る`, () => look(n)]] : []),
@@ -2120,6 +2159,9 @@ root.addEventListener('click', e => {
       ['全部見る', () => { act({ t: 'note', msg: '本国を全部見ました' }); openDeckView(0); }],
       ['切る', () => { shuffle(B.priv.deck); savePriv(); act({ t: 'note', msg: '本国を切りました' }); }],
       ['上の1枚を捨て山へ', () => { const g = B.priv.deck.splice(0, 1); savePriv(); if (g.length) act({ t: 'enter', cards: g, zone: 'discard', src: 'deck' }); }],
+      ...N() > 1 ? [[`上から${N()}枚を捨て山へ`, () => { const g = B.priv.deck.splice(0, N()); savePriv(); if (g.length) act({ t: 'enter', cards: g, zone: 'discard', src: 'deck' }); }]] : [],
+      ['上の1枚をジャンクヤードへ（廃棄）', () => { const g = B.priv.deck.splice(0, 1); savePriv(); if (g.length) act({ t: 'enter', cards: g, zone: 'junk', src: 'deck' }); }],
+      ...N() > 1 ? [[`上から${N()}枚をジャンクヤードへ（廃棄）`, () => { const g = B.priv.deck.splice(0, N()); savePriv(); if (g.length) act({ t: 'enter', cards: g, zone: 'junk', src: 'deck' }); }]] : [],
       ['上の1枚を除外', () => { const g = B.priv.deck.splice(0, 1); savePriv(); if (g.length) act({ t: 'enter', cards: g, zone: 'removed', src: 'deck' }); }],
       ...N() > 1 ? [[`上から${N()}枚を除外`, () => { const g = B.priv.deck.splice(0, N()); savePriv(); if (g.length) act({ t: 'enter', cards: g, zone: 'removed', src: 'deck' }); }]] : []
     ]);
