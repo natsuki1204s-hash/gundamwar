@@ -700,6 +700,51 @@ function drawSE(n) {
     }
   } catch (e) {}
 }
+// ターン開始の帯（2026-11-21）：ターンが変わった時、横から帯が滑り込んで反対へ抜ける。
+// 手番の人には「YOUR TURN」、相手には「OPPONENT'S TURN」、観戦には「○○のターン」。音も3種（「音」で消せる）
+let turnSeen;   // 最後に見たターン（undefined＝まだ盤面を見ていない）
+function turnBanner(S) {
+  const key = S && S.active != null && S.turn > 0 ? `${S.game}:${S.turn}:${S.active}` : null;
+  if (key === turnSeen) return;
+  const first = turnSeen === undefined; turnSeen = key;
+  if (!key || first) return;   // 入った直後（途中の盤面）には出さない
+  const act = S.active, who = esc(S.seats[act]?.name || `席${act + 1}`);
+  const kind = !isPlayer() ? 'spec' : act === mySeat() ? 'mine' : 'opp';
+  const big = kind === 'mine' ? 'YOUR TURN' : kind === 'opp' ? "OPPONENT'S TURN" : `TURN ${S.turn}`;
+  const sub = kind === 'mine' ? `第${S.turn}ターン　あなたのターンです` : `第${S.turn}ターン　${who}のターン`;
+  document.querySelectorAll('.tbanner').forEach(x => x.remove());
+  const el = document.createElement('div');
+  el.className = `tbanner ${kind}`;
+  el.innerHTML = `<div class="tbband"><div class="tbin"><i class="tbtag">${kind === 'spec' ? 'TURN CHANGE' : `TURN ${S.turn}`}</i><b>${big}</b><span>${sub}</span></div></div>`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2600);
+  turnSE(kind);
+}
+function turnSE(kind) {
+  if (!seOn()) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const ac = audioCtx, t0 = ac.currentTime + .02;
+    // 帯が通る「ヒュオッ」（雑音を低→高へ）
+    const len = Math.floor(ac.sampleRate * .45), buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) { const t = i / len; d[i] = (Math.random() * 2 - 1) * Math.sin(Math.PI * t) * .9; }
+    const src = ac.createBufferSource(); src.buffer = buf;
+    const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.4;
+    bp.frequency.setValueAtTime(kind === 'opp' ? 500 : 700, t0); bp.frequency.exponentialRampToValueAtTime(kind === 'opp' ? 1600 : 3200, t0 + .4);
+    const g = ac.createGain(); g.gain.value = .35;
+    src.connect(bp).connect(g).connect(ac.destination); src.start(t0);
+    // 音の並び：自分＝明るく上がる3音、相手＝低く下がる2音、観戦＝短い2音
+    const notes = kind === 'mine' ? [[523, 0], [659, .09], [784, .18], [1047, .27]] : kind === 'opp' ? [[392, 0], [294, .16]] : [[587, 0], [880, .12]];
+    const typ = kind === 'opp' ? 'sawtooth' : 'triangle';
+    notes.forEach(([f, dt], i) => {
+      const o = ac.createOscillator(), og = ac.createGain(), lp = ac.createBiquadFilter();
+      o.type = typ; o.frequency.value = f; lp.type = 'lowpass'; lp.frequency.value = kind === 'opp' ? 1400 : 4000;
+      const ts = t0 + .12 + dt, dur = i === notes.length - 1 ? .55 : .16;
+      og.gain.setValueAtTime(.0001, ts); og.gain.exponentialRampToValueAtTime(kind === 'opp' ? .16 : .2, ts + .015); og.gain.exponentialRampToValueAtTime(.0001, ts + dur);
+      o.connect(lp).connect(og).connect(ac.destination); o.start(ts); o.stop(ts + dur + .02);
+    });
+  } catch (e) {}
+}
 const takeFrom = (arr, u) => { const i = arr.findIndex(c => c.u === u); return i < 0 ? null : arr.splice(i, 1)[0]; };
 const takeFromHand = u => takeFrom(B.priv.hand, u);
 const takeFromDeck = u => takeFrom(B.priv.deck, u);
@@ -1204,6 +1249,7 @@ function render() {
   if (!B.S) { renderLobby(); return; }
   regTokens(B.S);
   VS = B.role === 'host' ? viewFor(0) : B.S;
+  turnBanner(VS);
   const me = mySeat(), op = 1 - me, S = VS;
   const st = root.querySelector('.blog')?.scrollTop, atBottom = (() => { const l = root.querySelector('.blog'); return !l || l.scrollTop + l.clientHeight >= l.scrollHeight - 4; })();
   const chatVal = $('bChatIn')?.value || '', chatFocus = document.activeElement?.id === 'bChatIn';
@@ -2110,6 +2156,6 @@ renderLobby();
   } else { $('bCode').value = r.code; joinRoom(r.role === 'spect' ? 'spect' : 'player'); }
 })();
 window.GWB = B; // 調べ物用
-if (LOCAL) window.GWT = { playFrom, takeFromHand, draw, render, act, castFromHand, savePriv, playFromDeck, cname, vs: () => VS, priv: () => B.priv };   // 試験モードだけ：画面確認の道具から操作する用
+if (LOCAL) window.GWT = { playFrom, takeFromHand, draw, render, act, castFromHand, savePriv, playFromDeck, cname, vs: () => VS, priv: () => B.priv, turnBanner, resetTb: () => { turnSeen = "x"; } };   // 試験モードだけ：画面確認の道具から操作する用
 window.addEventListener('gw-images', () => { if (B.S) render(); });   // みんなの画像が届いたら描き直す
 })();
