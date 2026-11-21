@@ -36,6 +36,7 @@ const cname = c => { if (c && c.coin) return c.coin; const x = c && c.id && BY_I
 const COINS = ['コイン', '+1/+1/+1コイン', '-1/-1/-1コイン', '+2/+2/+2コイン', '解体コイン', '汚染コイン'];
 const COIN_ST = /^([+\-±]\d+)\/([+\-±]\d+)\/([+\-±]\d+)コイン$/;   // 戦闘力を変えるコイン（+1/+1/+1 など）
 const coinShort = n => { const m = COIN_ST.exec(n); return m ? m[1] : n.replace(/コイン$/, '').slice(0, 3) || '●'; };
+const SWAP_Z = ['deploy', 'space', 'earth'];   // 換装で入れ替えられる場所（リングのユニットは換装元にできない：Wiki「換装」）
 const BATTLE = ['space', 'earth', 'ring'];   // リングは第3の戦場（使う時だけ）
 // 一時修正（コマンドや能力で一時的に変わった分）：c.tm = { d:[格闘,射撃,耐久], s:※を付けるか, m:メモ, k:ターン終了で消さない }
 const fmtMod = d => d.map(v => (v >= 0 ? '+' : '') + v).join('/');
@@ -373,6 +374,19 @@ function apply(a, who) {
       }
       return;
     }
+    case 'swap': {    // 換装：手札のユニットと、場の自軍ユニット1枚を置き換える（場所・ロール状態・セット・コイン・一時修正を引き継ぐ。変形・ヴァリアブル・裏向きは引き継がない）
+      const c0 = a.cards && a.cards[0], f = findCard(S, a.u); if (!c0 || !BY_ID.has(c0.id)) return;
+      if (!f || f.parent || f.c.coin || f.seat !== who.seat || !SWAP_Z.includes(f.zone)) { gainBack(who.seat, c0); return '換装する場のユニットが見つかりません（手札に戻しました）'; }
+      const old = f.c;
+      if (!old.tk && !canReach(old.o)) { gainBack(who.seat, c0); return `${S.seats[old.o].name || '持ち主'}がいないので換装できません`; }
+      const nc = { u: c0.u, id: c0.id, o: who.seat, r: a.rr ? false : !!old.r, f: false, s: old.s || [], ...(old.cn ? { cn: old.cn } : {}), ...(old.tm ? { tm: old.tm } : {}) };
+      nc.s.forEach(x => { if (x.on === old.u) delete x.on; });
+      f.arr[f.i] = nc;
+      if (!old.tk) sendGain(old.o, { u: old.u, id: old.id }, 'hand');
+      const kept = [nc.s.length ? `セット${nc.s.length}枚` : '', old.cn ? 'コイン' : '', old.tm ? '一時修正' : ''].filter(Boolean);
+      log(`${nm}が換装：手札の『${cname(nc)}』と${zoneLabel(f.seat, f.zone)}の『${old.f && !old.tk ? '裏向きのカード' : cname(old)}』を置き換えました（${old.tk ? 'トークンは消えます' : `『${cname(old)}』は持ち主の手札へ`}。${old.r ? (a.rr ? 'ロール状態を引き継がずリロール' : 'ロール状態のまま') : 'リロール状態'}${kept.length ? '・' + kept.join('・') + 'を引き継ぎ' : ''}）`);
+      return;
+    }
     case 'leave': {   // 場から持ち主の手札・本国へ
       const f = findCard(S, a.u); if (!f) return;
       if (f.c.coin) { f.arr.splice(f.i, 1); log(`${nm}が『${f.c.coin}』${f.c.n}枚を取り除きました`); return; }
@@ -623,6 +637,7 @@ function sendFx(seat, m) {
   if (seat === mySeat() && B.role === 'host') setTimeout(() => handleFx(m), 0);   // apply の途中で act を呼ばないように後回し
   else B.conns.filter(x => x.seat === seat).forEach(x => x.conn.send({ k: 'fx', m }));
 }
+const gainBack = (seat, c) => sendGain(seat, { u: c.u, id: c.id }, 'hand');   // 断られた操作のカードを手札へ返す
 function sendGain(seat, card, to) {
   if (seat === mySeat()) gain(card, to);
   else B.conns.filter(x => x.seat === seat).forEach(x => x.conn.send({ k: 'gain', card, to }));
@@ -1333,6 +1348,7 @@ function render() {
   if (dlg.open && B.pileView) { const pl = dlg.querySelector('.plist'), sc = pl && pl.scrollTop; openPile(B.pileView.seat, B.pileView.z); const p2 = dlg.querySelector('.plist'); if (p2) p2.scrollTop = sc || 0; }
   checkReveal(S);
   syncShow();
+  markSwap();
 }
 
 // ---------------------------------------------------------------------
@@ -1559,6 +1575,7 @@ function handMenu(u, x, y, title, first) {
     ...isCmd ? [[castLabel(x0), () => castFromHand(u)], '-'] : [],
     ...variN(BY_ID.get(c.id)) ? [[`ヴァリアブル(${variN(BY_ID.get(c.id))})：配備エリアへ逆向きで出す（${BY_ID.get(c.id).c}の特殊G・Gのプレイ）`, () => playFromHand(u, 'deploy', { vb: true })], '-'] : [],
     ...['deploy', 'G', 'space', 'earth', 'hangar'].map(z => [`${ZONES[z]}へ出す`, () => playFromHand(u, z)]),
+    ...x0 && x0.t === 'U' ? [['換装：場の自軍ユニットと入れ替える…', () => startSwap(u)]] : [],
     ['裏向きで配備エリアへ', () => playFromHand(u, 'deploy', { f: true })],
     ...(B.priv.show || []).includes(u)
       ? [['このカードの公開をやめる', () => setShow(B.priv.show.filter(x => x !== u), false)]]
@@ -1570,6 +1587,46 @@ function handMenu(u, x, y, title, first) {
     ['本国の下に戻す', () => { B.priv.deck.push(takeFromHand(u)); savePriv(); render(); act({ t: 'note', msg: '手札を1枚本国の下に戻しました' }); }]
   ], { cid: c.id, u });
 }
+// 換装（2026-11-21）：手札のユニットを選んでから、場の自軍ユニットを押して入れ替える。換装できるか（名称・タイミング・1ターン1回）は人が判断
+let swapU = null;
+const swapOk = f => f && !f.parent && !f.c.coin && f.seat === mySeat() && SWAP_Z.includes(f.zone);
+function startSwap(u) {
+  const c = B.priv && B.priv.hand.find(c => c.u === u); if (!c) return;
+  const n = VS.seats[mySeat()] ? SWAP_Z.reduce((k, z) => k + VS.seats[mySeat()].z[z].filter(x => !x.coin).length, 0) : 0;
+  if (!n) return toast('換装できる場の自軍ユニットがありません（配備エリア・戦闘エリア宇宙/地球）');
+  swapU = u; render();
+}
+function endSwap() { if (swapU) { swapU = null; render(); } }
+function swapPick(t, x, y) {   // 換装先（場のユニット）を押した
+  const c = B.priv && B.priv.hand.find(c => c.u === swapU), f = VS && findCard(VS, t);
+  if (!c) return endSwap();
+  if (!swapOk(f)) return toast('配備エリアか戦闘エリア（宇宙・地球）の自軍ユニットを押してください（Esc でやめる）');
+  const go = rr => {
+    if (!online()) return toast('つながっていません');
+    const h = takeFromHand(swapU); swapU = null; if (!h) return render();
+    savePriv(); render(); act({ t: 'swap', cards: [h], u: t, rr });
+  };
+  const tn = f.c.f && !f.c.id ? '裏向きのカード' : cname(f.c);
+  menu(x, y, `換装：手札の『${cname(c)}』⇄ 場の『${tn}』`, [
+    [`入れ替える${f.c.r ? '（ロール状態のまま）' : ''}`, () => go(false)],
+    ...f.c.r ? [['入れ替えてリロールする', () => go(true)]] : [],
+    ['別のユニットを選ぶ', () => {}],
+    ['換装をやめる', endSwap]
+  ], { cid: f.c.id, u: t });
+}
+function markSwap() {
+  const on = !!(swapU && B.priv && B.priv.hand.some(c => c.u === swapU)); if (!on) swapU = null;
+  root.classList.toggle('swapping', on);
+  let bar = document.getElementById('swapBar');
+  if (!on) { if (bar) bar.remove(); return; }
+  root.querySelectorAll('.slot[data-src="pub"][data-u]').forEach(el => { if (swapOk(findCard(VS, el.dataset.u))) el.classList.add('swapok'); });
+  root.querySelectorAll('.slot[data-src="hand"][data-u]').forEach(el => { if (el.dataset.u === swapU) el.classList.add('swapsrc'); });
+  if (!bar) { bar = document.createElement('div'); bar.id = 'swapBar'; document.body.appendChild(bar); }
+  const c = B.priv.hand.find(c => c.u === swapU);
+  bar.innerHTML = `換装：手札の『${esc(cname(c))}』と入れ替える場の自軍ユニットを押してください <button id="swapNo">やめる（Esc）</button>`;
+  bar.querySelector('#swapNo').onclick = endSwap;
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && swapU && !ctx.classList.contains('on')) endSwap(); }, true);
 // 手札から無作為に n 枚選ぶ（無作為に廃棄する効果など）。選んだことを先に記録に出してから、移す先を決める
 function randomHand(n, e) {
   if (!B.priv || !online()) return toast('つながっていません');
@@ -2013,6 +2070,11 @@ function checkReveal(S) {
 // 盤面のクリック
 root.addEventListener('click', e => {
   if (!B.S || ctx.contains(e.target)) return;
+  if (swapU) {   // 換装の相手選び中：場のユニットを押すと入れ替えのメニュー、ほかを押すとやめる
+    const t = e.target.closest('.slot[data-src="pub"][data-u]');
+    if (t) { swapPick(t.dataset.u, e.clientX, e.clientY); return; }
+    if (e.target.closest('[data-src="hand"][data-u]')) { endSwap(); return; }
+  }
   // カードの左上（「詳細」の印）を押すと、メニューを出さずに「詳しく見る」。右の大きい表示を押しても同じ
   const ptb = e.target.closest('[data-ptbtn]');
   if (ptb) { if (isPlayer()) act({ t: 'point', seat: +ptb.dataset.seat, u: ptb.dataset.ptbtn }); return; }

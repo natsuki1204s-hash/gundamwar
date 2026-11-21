@@ -530,3 +530,9 @@ body:has(#battle.on) #toast{bottom:auto;top:56px}
 @keyframes tbBandR{0%{transform:translateX(110%) skewX(12deg)}18%{transform:translateX(0) skewX(12deg)}78%{transform:translateX(0) skewX(12deg)}100%{transform:translateX(-110%) skewX(12deg)}}
 @keyframes tbTextR{0%{transform:translateX(40vw) skewX(-12deg);opacity:0}22%{transform:translateX(0) skewX(-12deg);opacity:1}74%{transform:translateX(-2vw) skewX(-12deg);opacity:1}100%{transform:translateX(-60vw) skewX(-12deg);opacity:0}}
 @media (prefers-reduced-motion:reduce){.tbband,.tbin{animation:tbDim 2.4s ease forwards}}
+/* 換装の相手選び（2026-11-21） */
+#battle.swapping .slot.swapok{cursor:crosshair;outline:3px solid #4fd1ff;outline-offset:2px;border-radius:6px;animation:swapGlow 1s ease-in-out infinite alternate}
+#battle.swapping .slot.swapsrc .mc{outline:3px solid #ffd34f;outline-offset:2px;border-radius:6px}
+@keyframes swapGlow{from{box-shadow:0 0 4px #4fd1ff}to{box-shadow:0 0 16px #4fd1ff}}
+#swapBar{position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:60;background:#0e2a3a;color:#e8f7ff;border:2px solid #4fd1ff;border-radius:8px;padding:6px 12px;font-size:14px;box-shadow:0 4px 16px #0008;max-width:calc(100vw - 32px)}
+#swapBar button{margin-left:8px}
